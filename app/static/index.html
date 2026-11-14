@@ -12,22 +12,43 @@
 <style>
   :root {
     --bg:#f7f8fa; --card:#ffffff; --text:#1d2330; --muted:#5b6475; --border:#dde1e8;
-    --accent:#2a78d6; --series:#2a78d6; --state-line:#3b4252; --area:#d9480f;
+    --accent:#2a78d6; --series:#2a78d6; --series-b:#b8327a; --state-line:#3b4252; --area:#d9480f;
+    --up:#2b8a3e; --down:#c92a2a;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg:#0f1218; --card:#171b23; --text:#e6e9ef; --muted:#9aa3b2; --border:#2a303b;
-      --accent:#5598e7; --series:#5598e7; --state-line:#c9cfdb; --area:#ff8a4c;
+      --accent:#5598e7; --series:#5598e7; --series-b:#e0609f; --state-line:#c9cfdb; --area:#ff8a4c;
+      --up:#69db7c; --down:#ff8787;
     }
   }
   * { box-sizing:border-box; }
   body { margin:0; font-family:system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--text); }
-  header { padding:14px 24px; border-bottom:1px solid var(--border); }
+  header { padding:14px 24px; border-bottom:1px solid var(--border); display:flex; flex-wrap:wrap;
+    gap:12px; align-items:center; justify-content:space-between; }
   header h1 { margin:0; font-size:20px; }
   header p { margin:4px 0 0; color:var(--muted); font-size:14px; }
-  main { display:grid; grid-template-columns: minmax(340px, 1.1fr) 1.4fr; gap:16px; padding:16px 24px; }
-  @media (max-width: 960px) { main { grid-template-columns:1fr; padding:16px; } }
+  .toolbar { display:flex; flex-wrap:wrap; gap:14px; align-items:center; font-size:14px; }
+  .toolbar label { flex-direction:row; align-items:center; gap:6px; font-size:14px; color:var(--text); }
+  .compare-only { display:none !important; }
+  body.compare .compare-only { display:inline-flex !important; }
+
+  /* Un panel = mapa + serie. Vista simple: mapa | serie. Comparación: panel A | panel B, cada uno apilado. */
+  main { display:grid; grid-template-columns:1fr; gap:16px; padding:16px 24px; }
+  .panel { display:grid; grid-template-columns:minmax(340px, 1.1fr) 1.4fr; gap:16px; min-width:0; }
+  body.compare main { grid-template-columns:1fr 1fr; }
+  body.compare .panel { grid-template-columns:1fr; align-content:start; }
+  #panel-B { display:none; }
+  body.compare #panel-B { display:grid; }
+  @media (max-width: 960px) {
+    main, body.compare main { grid-template-columns:1fr; padding:16px; }
+    .panel { grid-template-columns:1fr; }
+  }
+
   .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:14px; min-width:0; }
+  .tag { display:none; font-weight:700; font-size:13px; color:#fff; border-radius:5px; padding:2px 8px; align-self:center; }
+  body.compare .tag { display:inline-block; }
+  #panel-A .tag { background:var(--series); } #panel-B .tag { background:var(--series-b); }
   .controls { display:flex; flex-wrap:wrap; gap:10px; align-items:end; margin-bottom:10px; }
   label { font-size:12px; color:var(--muted); display:flex; flex-direction:column; gap:4px; }
   input, select, button { font:inherit; font-size:14px; padding:6px 8px; border-radius:6px;
@@ -35,8 +56,10 @@
   button { cursor:pointer; }
   select { max-width:260px; }
   button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
-  #map { width:100%; height:520px; border-radius:8px; }
-  #ts { width:100%; height:420px; }
+  #panel-B button.primary { background:var(--series-b); border-color:var(--series-b); }
+  .map { width:100%; height:520px; border-radius:8px; }
+  .ts { width:100%; height:420px; }
+  body.compare .map { height:460px; } body.compare .ts { height:380px; }
   .hint { font-size:13px; color:var(--muted); margin:8px 0 0; line-height:1.5; }
   .sel { display:flex; align-items:center; gap:8px; font-size:14px; margin-bottom:6px; min-height:28px; }
   .chip { font-size:12px; padding:2px 8px; border-radius:999px; border:1px solid var(--border); color:var(--muted); }
@@ -44,6 +67,8 @@
   .stat { border:1px solid var(--border); border-radius:8px; padding:8px 10px; }
   .stat span { font-size:12px; color:var(--muted); }
   .stat b { display:block; font-size:18px; font-variant-numeric:tabular-nums; }
+  .stat small { display:block; font-size:12px; font-variant-numeric:tabular-nums; }
+  .stat small.up { color:var(--up); } .stat small.down { color:var(--down); }
   .err { color:#c92a2a; font-size:14px; }
   /* Leyenda y lectura del mapa */
   .legend, .readout { background:var(--card); color:var(--text); padding:6px 10px; border-radius:6px;
@@ -56,52 +81,19 @@
 </head>
 <body>
 <header>
-  <h1>Precipitación diaria IMERG V07 — México</h1>
-  <p id="meta">Cargando…</p>
+  <div>
+    <h1>Precipitación diaria IMERG V07 — México</h1>
+    <p id="meta">Cargando…</p>
+  </div>
+  <div class="toolbar">
+    <label><input type="checkbox" id="compare"> Comparar A | B</label>
+    <label class="compare-only" title="Misma escala de color en ambos mapas y mismo eje Y en ambas series">
+      <input type="checkbox" id="shared" checked> Escala compartida</label>
+    <label class="compare-only"><input type="checkbox" id="syncMaps" checked> Mover mapas juntos</label>
+    <button class="compare-only" id="copyAB" title="Copia fechas, agregación y selección de A a B">Copiar A → B</button>
+  </div>
 </header>
-<main>
-  <section class="card">
-    <div class="controls">
-      <label>Mapa: acumulado desde <input type="date" id="mapStart"></label>
-      <label>hasta <input type="date" id="mapEnd"></label>
-      <button class="primary" onclick="loadMap()">Actualizar mapa</button>
-      <label><span>&nbsp;</span>
-        <span style="display:flex;gap:6px;align-items:center;font-size:14px;color:var(--text)">
-          <input type="checkbox" id="showStates" checked> Estados</span></label>
-      <label>Ver municipios de
-        <select id="muniOf"><option value="">— ninguno —</option></select></label>
-    </div>
-    <div id="map"></div>
-    <p class="hint">
-      <b>Punto:</b> clic en el mapa. <b>Área:</b> dibuja un rectángulo o un polígono con los botones de la izquierda del mapa
-      (puedes editarla o moverla). <b>Estado o municipio:</b> menú "Consultar" a la derecha.
-    </p>
-  </section>
-
-  <section class="card">
-    <div class="sel"><span class="chip" id="selType">—</span><b id="selName">Selecciona un punto o dibuja un área</b></div>
-    <div class="controls">
-      <label>Consultar estado
-        <select id="qEnt"><option value="">— elegir —</option></select></label>
-      <label>Municipio
-        <select id="qMun" disabled><option value="">Todo el estado</option></select></label>
-      <button onclick="selectMexico()">México completo</button>
-    </div>
-    <div class="controls">
-      <label>Agregación
-        <select id="freq">
-          <option value="D">Diaria</option><option value="W">Semanal</option>
-          <option value="MS" selected>Mensual</option><option value="YS">Anual</option>
-        </select>
-      </label>
-      <label>Desde <input type="date" id="start"></label>
-      <label>Hasta <input type="date" id="end"></label>
-      <button class="primary" onclick="loadSeries()">Graficar</button>
-    </div>
-    <div id="ts"></div>
-    <div class="stats" id="stats"></div>
-  </section>
-</main>
+<main id="panels"></main>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -120,12 +112,9 @@ function colorFor(t) {                 // t en [0, 1]
   return a.map((v, k) => Math.round(v + (b[k] - v) * f));
 }
 
-// ---------------- Estado de la app ----------------
-let selection = null;      // {type:'point', lat, lon} | {type:'area', geometry, name} | {type:'mexico'}
-let areaLayer = null, pointMarker = null, grid = null, rasterLayer = null, statesLayer = null;
-let statesGeo = null, catalog = null, muniLayer = null, highlight = null;
-const muniCache = {};
 const ATTR_INEGI = 'Límites: INEGI, Marco Geoestadístico 2026';
+const MEXICO_BOUNDS = [[14.4, -118.5], [32.8, -86.6]];
+const SERIES_COLOR = { A: '--series', B: '--series-b' };
 
 async function getJSON(url, opts) {
   const r = await fetch(url, opts);
@@ -134,137 +123,231 @@ async function getJSON(url, opts) {
   return body;
 }
 
-// ---------------- Mapa ----------------
-// zoomSnap 1 (zoom entero): evita costuras blancas entre teselas del mapa base
-const map = L.map('map', { zoomSnap: 1 }).fitBounds([[14.4, -118.5], [32.8, -86.6]]);
-L.tileLayer(`https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/${dark ? 'World_Dark_Gray_Base' : 'World_Light_Gray_Base'}/MapServer/tile/{z}/{y}/{x}`, {
-  attribution: 'Mapa base &copy; Esri', maxZoom: 16,
-}).addTo(map);
-map.createPane('raster').style.zIndex = 350;   // debajo de estados y dibujos
-
-// Herramientas de dibujo (Geoman)
-map.pm.setLang('es');
-map.pm.addControls({
-  position: 'topleft', drawMarker: false, drawCircleMarker: false, drawPolyline: false,
-  drawCircle: false, drawText: false, cutPolygon: false, rotateMode: false,
-});
-map.pm.setPathOptions({ color: css('--area'), weight: 2, fillOpacity: 0.08 });
-
-const busyDrawing = () => map.pm.globalDrawModeEnabled() || map.pm.globalEditModeEnabled()
-  || map.pm.globalRemovalModeEnabled() || map.pm.globalDragModeEnabled();
-
-map.on('pm:create', e => {
-  if (areaLayer) map.removeLayer(areaLayer);       // una sola área activa
-  areaLayer = e.layer;
-  areaLayer.on('pm:edit pm:dragend', () => selectArea());
-  areaLayer.on('click', ev => { L.DomEvent.stopPropagation(ev); if (!busyDrawing()) selectArea(); });
-  selectArea();
-});
-map.on('pm:remove', e => {
-  if (e.layer === areaLayer) { areaLayer = null; if (selection?.type === 'area') selectMexico(); }
-});
-
-map.on('click', e => {
-  if (busyDrawing()) return;
-  clearEntityMenus();
-  selection = { type: 'point', lat: +e.latlng.lat.toFixed(3), lon: +e.latlng.lng.toFixed(3) };
-  if (!pointMarker) pointMarker = L.circleMarker(e.latlng, { radius: 6, color: '#fff', weight: 2,
-    fillColor: css('--area'), fillOpacity: 1 }).addTo(map);
-  else pointMarker.setLatLng(e.latlng).addTo(map);
-  loadSeries();
-});
-
-// Lectura bajo el cursor: coordenadas + acumulado del mapa
-const readout = L.control({ position: 'bottomleft' });
-readout.onAdd = () => { const d = L.DomUtil.create('div', 'readout'); d.id = 'readout'; d.textContent = 'Mueve el cursor sobre el mapa'; return d; };
-readout.addTo(map);
-map.on('mousemove', e => {
-  const { lat, lng } = e.latlng;
-  let txt = `${lat.toFixed(2)}, ${lng.toFixed(2)}`;
-  const v = valueAt(lat, lng);
-  if (v != null) txt += ` · <b>${fmt(v)} mm</b>`;
-  $('readout').innerHTML = txt;
-});
-
-// Leyenda
-const legend = L.control({ position: 'bottomright' });
-legend.onAdd = () => { const d = L.DomUtil.create('div', 'legend'); d.id = 'legend'; return d; };
-legend.addTo(map);
-
-// Estados INEGI (solo referencia: contorno + nombre al pasar el cursor)
-const refTooltip = (layer, text) => layer.bindTooltip(text, { sticky: true, className: 'state-tip', direction: 'top', offset: [0, -8] });
-fetch('/static/boundaries/estados.geojson').then(r => r.json()).then(gj => {
-  statesGeo = gj;
-  statesLayer = L.geoJSON(gj, {
-    style: { color: css('--state-line'), weight: 0.8, opacity: 0.7, fill: true, fillOpacity: 0 },
-    pmIgnore: true, attribution: ATTR_INEGI,
-    onEachFeature: (f, layer) => {
-      refTooltip(layer, f.properties.NOMGEO);
-      layer.on('mouseover', () => layer.setStyle({ weight: 2, opacity: 1 }));
-      layer.on('mouseout', () => statesLayer.resetStyle(layer));
-    },
-  }).addTo(map);
-});
-$('showStates').onchange = e => statesLayer && (e.target.checked ? statesLayer.addTo(map) : map.removeLayer(statesLayer));
-
-// Municipios: solo se descarga la entidad elegida (y se guarda en memoria)
-async function getMunicipios(cveEnt) {
-  if (!muniCache[cveEnt]) muniCache[cveEnt] = await getJSON(`/static/boundaries/municipios/${cveEnt}.geojson`);
+// ---------------- Recursos compartidos entre paneles ----------------
+let info = null;
+const statesGeoP = getJSON('/static/boundaries/estados.geojson').catch(() => null);
+const catalogP = getJSON('/static/boundaries/catalogo.json').catch(() => null);
+const muniCache = {};
+async function getMunicipios(cveEnt) {   // solo se descarga la entidad elegida (y se guarda en memoria)
+  if (!muniCache[cveEnt]) muniCache[cveEnt] = getJSON(`/static/boundaries/municipios/${cveEnt}.geojson`);
   return muniCache[cveEnt];
 }
-async function showMunicipios(cveEnt) {
-  if (muniLayer) { map.removeLayer(muniLayer); muniLayer = null; }
+
+// ---------------- Modo comparación ----------------
+const panels = {};                                   // 'A' | 'B' -> panel
+const isCompare = () => document.body.classList.contains('compare');
+const sharedScale = () => isCompare() && $('shared').checked;
+const visible = () => (isCompare() ? ['A', 'B'] : ['A']).map(k => panels[k]).filter(Boolean);
+
+function panelHTML(k) {
+  return `
+  <div class="panel" id="panel-${k}">
+    <section class="card">
+      <div class="controls">
+        <span class="tag">${k}</span>
+        <label>Mapa: acumulado desde <input type="date" data-f="mapStart"></label>
+        <label>hasta <input type="date" data-f="mapEnd"></label>
+        <button class="primary" data-act="map">Actualizar mapa</button>
+        <label><span>&nbsp;</span>
+          <span style="display:flex;gap:6px;align-items:center;font-size:14px;color:var(--text)">
+            <input type="checkbox" data-f="showStates" checked> Estados</span></label>
+        <label>Ver municipios de
+          <select data-f="muniOf"><option value="">— ninguno —</option></select></label>
+      </div>
+      <div class="map" data-f="map"></div>
+      <p class="hint">
+        <b>Punto:</b> clic en el mapa. <b>Área:</b> dibuja un rectángulo o un polígono con los botones de la izquierda del mapa
+        (puedes editarla o moverla). <b>Estado o municipio:</b> menú "Consultar".
+      </p>
+    </section>
+
+    <section class="card">
+      <div class="sel"><span class="tag">${k}</span><span class="chip" data-f="selType">—</span>
+        <b data-f="selName">Selecciona un punto o dibuja un área</b></div>
+      <div class="controls">
+        <label>Consultar estado
+          <select data-f="qEnt"><option value="">— elegir —</option></select></label>
+        <label>Municipio
+          <select data-f="qMun" disabled><option value="">Todo el estado</option></select></label>
+        <button data-act="mexico">México completo</button>
+      </div>
+      <div class="controls">
+        <label>Agregación
+          <select data-f="freq">
+            <option value="D">Diaria</option><option value="W">Semanal</option>
+            <option value="MS" selected>Mensual</option><option value="YS">Anual</option>
+          </select>
+        </label>
+        <label>Desde <input type="date" data-f="start"></label>
+        <label>Hasta <input type="date" data-f="end"></label>
+        <button class="primary" data-act="ts">Graficar</button>
+      </div>
+      <div class="ts" data-f="ts"></div>
+      <div class="stats" data-f="stats"></div>
+    </section>
+  </div>`;
+}
+
+// ---------------- Panel (mapa + serie) ----------------
+async function createPanel(k) {
+  $('panels').insertAdjacentHTML('beforeend', panelHTML(k));
+  const root = $(`panel-${k}`);
+  const el = name => root.querySelector(`[data-f="${name}"]`);
+  const p = {
+    k, el, selection: null, mapData: null, series: null, seriesReq: 0, mapReq: 0,
+    areaLayer: null, pointMarker: null, grid: null, rasterLayer: null, statesLayer: null,
+    muniLayer: null, highlight: null,
+  };
+  panels[k] = p;
+  root.addEventListener('click', ev => {
+    const act = ev.target.dataset?.act;
+    if (act === 'map') loadMap(p);
+    else if (act === 'ts') loadSeries(p);
+    else if (act === 'mexico') selectMexico(p);
+  });
+
+  // Fechas
+  for (const f of ['start', 'end', 'mapStart', 'mapEnd']) { el(f).min = info.start; el(f).max = info.end; }
+  el('start').value = info.start; el('end').value = info.end;
+  const y = info.end.slice(0, 4);
+  el('mapStart').value = `${y}-01-01` < info.start ? info.start : `${y}-01-01`;
+  el('mapEnd').value = info.end;
+  el('freq').onchange = () => loadSeries(p);
+
+  // Mapa — zoomSnap 1 (zoom entero): evita costuras blancas entre teselas del mapa base
+  const map = p.map = L.map(el('map'), { zoomSnap: 1 }).fitBounds(MEXICO_BOUNDS);
+  L.tileLayer(`https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/${dark ? 'World_Dark_Gray_Base' : 'World_Light_Gray_Base'}/MapServer/tile/{z}/{y}/{x}`, {
+    attribution: 'Mapa base &copy; Esri', maxZoom: 16,
+  }).addTo(map);
+  map.createPane('raster').style.zIndex = 350;   // debajo de estados y dibujos
+
+  // Herramientas de dibujo (Geoman)
+  map.pm.setLang('es');
+  map.pm.addControls({
+    position: 'topleft', drawMarker: false, drawCircleMarker: false, drawPolyline: false,
+    drawCircle: false, drawText: false, cutPolygon: false, rotateMode: false,
+  });
+  map.pm.setPathOptions({ color: css('--area'), weight: 2, fillOpacity: 0.08 });
+
+  map.on('pm:create', e => setAreaLayer(p, e.layer));
+  map.on('pm:remove', e => {
+    if (e.layer === p.areaLayer) { p.areaLayer = null; if (p.selection?.type === 'area') selectMexico(p); }
+  });
+  map.on('click', e => {
+    if (busyDrawing(p)) return;
+    selectPoint(p, e.latlng.lat, e.latlng.lng);
+  });
+  map.on('moveend', () => syncMaps(p));
+
+  // Lectura bajo el cursor: coordenadas + acumulado del mapa
+  const readout = L.control({ position: 'bottomleft' });
+  readout.onAdd = () => { p.readout = L.DomUtil.create('div', 'readout'); p.readout.textContent = 'Mueve el cursor sobre el mapa'; return p.readout; };
+  readout.addTo(map);
+  map.on('mousemove', e => {
+    const { lat, lng } = e.latlng;
+    let txt = `${lat.toFixed(2)}, ${lng.toFixed(2)}`;
+    const v = valueAt(p, lat, lng);
+    if (v != null) txt += ` · <b>${fmt(v)} mm</b>`;
+    p.readout.innerHTML = txt;
+  });
+
+  // Leyenda
+  const legend = L.control({ position: 'bottomright' });
+  legend.onAdd = () => (p.legend = L.DomUtil.create('div', 'legend'));
+  legend.addTo(map);
+
+  // Estados INEGI (solo referencia: contorno + nombre al pasar el cursor)
+  statesGeoP.then(gj => {
+    if (!gj) return;
+    p.statesLayer = L.geoJSON(gj, {
+      style: { color: css('--state-line'), weight: 0.8, opacity: 0.7, fill: true, fillOpacity: 0 },
+      pmIgnore: true, attribution: ATTR_INEGI,
+      onEachFeature: (f, layer) => {
+        refTooltip(layer, f.properties.NOMGEO);
+        layer.on('mouseover', () => layer.setStyle({ weight: 2, opacity: 1 }));
+        layer.on('mouseout', () => p.statesLayer.resetStyle(layer));
+      },
+    });
+    if (el('showStates').checked) p.statesLayer.addTo(map);
+  });
+  el('showStates').onchange = e => p.statesLayer && (e.target.checked ? p.statesLayer.addTo(map) : map.removeLayer(p.statesLayer));
+  el('muniOf').onchange = e => showMunicipios(p, e.target.value);
+
+  // Menús de consulta a partir del catálogo INEGI
+  const catalog = await catalogP;
+  if (catalog) {
+    const opts = catalog.estados.map(e => `<option value="${e.cve}">${e.nombre}</option>`).join('');
+    el('qEnt').insertAdjacentHTML('beforeend', opts);
+    el('muniOf').insertAdjacentHTML('beforeend', opts);
+  }
+  el('qEnt').onchange = e => { fillMunMenu(p, e.target.value); if (e.target.value) selectEntity(p, e.target.value); };
+  el('qMun').onchange = e => selectEntity(p, e.target.value || el('qEnt').value);
+  return p;
+}
+
+const busyDrawing = p => p.map.pm.globalDrawModeEnabled() || p.map.pm.globalEditModeEnabled()
+  || p.map.pm.globalRemovalModeEnabled() || p.map.pm.globalDragModeEnabled();
+const refTooltip = (layer, text) => layer.bindTooltip(text, { sticky: true, className: 'state-tip', direction: 'top', offset: [0, -8] });
+
+// Mover ambos mapas juntos (paneo y zoom)
+let syncing = false;
+function syncMaps(src) {
+  if (syncing || !isCompare() || !$('syncMaps').checked) return;
+  const dst = panels[src.k === 'A' ? 'B' : 'A'];
+  if (!dst) return;
+  syncing = true;   // setView sin animación dispara moveend de forma síncrona; el flag evita el rebote
+  dst.map.setView(src.map.getCenter(), src.map.getZoom(), { animate: false });
+  syncing = false;
+}
+
+async function showMunicipios(p, cveEnt) {
+  if (p.muniLayer) { p.map.removeLayer(p.muniLayer); p.muniLayer = null; }
   if (!cveEnt) return;
   const gj = await getMunicipios(cveEnt);
-  muniLayer = L.geoJSON(gj, {
+  p.muniLayer = L.geoJSON(gj, {
     style: { color: css('--state-line'), weight: 0.6, opacity: 0.8, dashArray: '3 3', fill: true, fillOpacity: 0 },
     pmIgnore: true, attribution: ATTR_INEGI,
     onEachFeature: (f, layer) => {
       refTooltip(layer, `${f.properties.NOMGEO} <span style="opacity:.6">${f.properties.CVEGEO}</span>`);
       layer.on('mouseover', () => layer.setStyle({ weight: 2, dashArray: null }));
-      layer.on('mouseout', () => muniLayer.resetStyle(layer));
+      layer.on('mouseout', () => p.muniLayer.resetStyle(layer));
     },
-  }).addTo(map);
-  map.fitBounds(muniLayer.getBounds(), { padding: [10, 10] });
+  }).addTo(p.map);
+  p.map.fitBounds(p.muniLayer.getBounds(), { padding: [10, 10] });
 }
-$('muniOf').onchange = e => showMunicipios(e.target.value);
 
 // Contorno resaltado de la entidad consultada (no interactivo)
-function setHighlight(feature, fitTo) {
-  if (highlight) { map.removeLayer(highlight); highlight = null; }
+function setHighlight(p, feature, fitTo) {
+  if (p.highlight) { p.map.removeLayer(p.highlight); p.highlight = null; }
   if (!feature) return;
-  highlight = L.geoJSON(feature, { style: { color: css('--area'), weight: 2.5, fill: false },
-    interactive: false, pmIgnore: true }).addTo(map);
+  p.highlight = L.geoJSON(feature, { style: { color: css('--area'), weight: 2.5, fill: false },
+    interactive: false, pmIgnore: true }).addTo(p.map);
   // Encuadra el estado (no el municipio) para conservar contexto
-  if (fitTo) map.fitBounds(L.geoJSON(fitTo).getBounds(), { padding: [20, 20] });
+  if (fitTo) p.map.fitBounds(L.geoJSON(fitTo).getBounds(), { padding: [20, 20] });
 }
 
-// Menús de consulta a partir del catálogo INEGI
-async function loadCatalog() {
-  catalog = await getJSON('/static/boundaries/catalogo.json');
-  const opts = catalog.estados.map(e => `<option value="${e.cve}">${e.nombre}</option>`).join('');
-  $('qEnt').insertAdjacentHTML('beforeend', opts);
-  $('muniOf').insertAdjacentHTML('beforeend', opts);
-}
-$('qEnt').onchange = e => {
-  const ent = catalog.estados.find(x => x.cve === e.target.value);
-  $('qMun').innerHTML = '<option value="">Todo el estado</option>' +
+async function fillMunMenu(p, cveEnt) {
+  const catalog = await catalogP;
+  const ent = catalog?.estados.find(x => x.cve === cveEnt);
+  p.el('qMun').innerHTML = '<option value="">Todo el estado</option>' +
     (ent ? ent.municipios.map(m => `<option value="${m.cve}">${m.nombre}</option>`).join('') : '');
-  $('qMun').disabled = !ent;
-  if (ent) selectEntity(ent.cve);
-};
-$('qMun').onchange = e => selectEntity(e.target.value || $('qEnt').value);
+  p.el('qMun').disabled = !ent;
+}
 
-// Ráster de precipitación: canvas reproyectado a Web Mercator para que cuadre con el mapa base
+// ---------------- Ráster de precipitación ----------------
+// Canvas reproyectado a Web Mercator para que cuadre con el mapa base
 function mercY(lat) { const r = lat * Math.PI / 180; return Math.log(Math.tan(Math.PI / 4 + r / 2)); }
 
-function drawRaster(d) {
+function p98(d) {
+  const vals = d.z.flat().filter(v => v != null).sort((a, b) => a - b);
+  return vals.length ? Math.max(vals[Math.floor(vals.length * 0.98)], 1) : 1;
+}
+
+function drawRaster(p, d, vmax, shared = false) {
   const nLat = d.lat.length, nLon = d.lon.length;
   const dLat = d.lat[1] - d.lat[0], dLon = d.lon[1] - d.lon[0];
   const south = d.lat[0] - dLat / 2, north = d.lat[nLat - 1] + dLat / 2;
   const west = d.lon[0] - dLon / 2, east = d.lon[nLon - 1] + dLon / 2;
-  const vals = d.z.flat().filter(v => v != null).sort((a, b) => a - b);
-  const vmax = vals.length ? Math.max(vals[Math.floor(vals.length * 0.98)], 1) : 1;  // percentil 98
 
   const W = nLon * 3, yN = mercY(north), yS = mercY(south);
   const H = Math.round(W * (yN - yS) / ((east - west) * Math.PI / 180));
@@ -280,129 +363,239 @@ function drawRaster(d) {
       ctx.fillRect(Math.floor(j * cw), Math.floor(y0), Math.ceil(cw), Math.ceil(y1 - y0) + 1);
     }
   }
-  if (rasterLayer) map.removeLayer(rasterLayer);
-  rasterLayer = L.imageOverlay(cv.toDataURL(), [[south, west], [north, east]],
-    { opacity: 0.8, pane: 'raster', interactive: false }).addTo(map);
+  if (p.rasterLayer) p.map.removeLayer(p.rasterLayer);
+  p.rasterLayer = L.imageOverlay(cv.toDataURL(), [[south, west], [north, east]],
+    { opacity: 0.8, pane: 'raster', interactive: false }).addTo(p.map);
 
-  grid = { ...d, dLat, dLon };
-  $('legend').innerHTML = `<div>Precipitación acumulada (mm)</div>
+  p.grid = { ...d, dLat, dLon };
+  p.legend.innerHTML = `<div>Precipitación acumulada (mm)${shared ? ' · escala A = B' : ''}</div>
     <div class="bar" style="background:linear-gradient(to right, ${RAMP.join(',')})"></div>
     <div class="ticks"><span>0</span><span>${fmt(vmax / 2, 0)}</span><span>≥ ${fmt(vmax, 0)}</span></div>
     <div style="color:var(--muted)">${d.start} → ${d.end}</div>`;
 }
 
-function valueAt(lat, lon) {
-  if (!grid) return null;
-  const i = Math.round((lat - grid.lat[0]) / grid.dLat), j = Math.round((lon - grid.lon[0]) / grid.dLon);
-  return grid.z[i]?.[j] ?? null;
+// Redibuja los mapas visibles; con escala compartida ambos usan el mismo máximo (percentil 98 mayor)
+function renderRasters() {
+  const ps = visible().filter(p => p.mapData);
+  ps.forEach(p => p.vmax ??= p98(p.mapData));
+  const common = sharedScale() && ps.length > 1 ? Math.max(...ps.map(p => p.vmax)) : null;
+  for (const p of ps) drawRaster(p, p.mapData, common ?? p.vmax, common != null);
 }
 
-async function loadMap() {
+function valueAt(p, lat, lon) {
+  const g = p.grid;
+  if (!g) return null;
+  const i = Math.round((lat - g.lat[0]) / g.dLat), j = Math.round((lon - g.lon[0]) / g.dLon);
+  return g.z[i]?.[j] ?? null;
+}
+
+async function loadMap(p) {
+  const req = ++p.mapReq;
   try {
-    drawRaster(await getJSON(`/api/map?start=${$('mapStart').value}&end=${$('mapEnd').value}&step=1`));
-  } catch (e) { $('legend').innerHTML = `<span class="err">Mapa: ${e.message}</span>`; }
+    const d = await getJSON(`/api/map?start=${p.el('mapStart').value}&end=${p.el('mapEnd').value}&step=1`);
+    if (req !== p.mapReq) return;    // llegó una respuesta más nueva
+    p.mapData = d; p.vmax = null;
+    renderRasters();
+  } catch (e) { p.legend.innerHTML = `<span class="err">Mapa: ${e.message}</span>`; }
 }
 
-// ---------------- Selección y series ----------------
-function clearEntityMenus() { $('qEnt').value = ''; $('qMun').value = ''; $('qMun').disabled = true; setHighlight(null); }
+// ---------------- Selección ----------------
+function clearEntityMenus(p) { p.el('qEnt').value = ''; p.el('qMun').value = ''; p.el('qMun').disabled = true; setHighlight(p, null); }
 
-function selectArea() {
-  if (!areaLayer) return;
-  if (pointMarker) map.removeLayer(pointMarker);
-  clearEntityMenus();
-  const isRect = areaLayer instanceof L.Rectangle;
-  selection = { type: 'area', geometry: areaLayer.toGeoJSON().geometry, name: isRect ? 'Rectángulo dibujado' : 'Polígono dibujado' };
-  loadSeries();
-}
-function selectMexico() {
-  if (pointMarker) map.removeLayer(pointMarker);
-  clearEntityMenus();
-  selection = { type: 'entity', cve: '00' };
-  loadSeries();
+function selectPoint(p, lat, lon) {
+  clearEntityMenus(p);
+  p.selection = { type: 'point', lat: +lat.toFixed(3), lon: +lon.toFixed(3) };
+  const ll = [lat, lon];
+  if (!p.pointMarker) p.pointMarker = L.circleMarker(ll, { radius: 6, color: '#fff', weight: 2,
+    fillColor: css('--area'), fillOpacity: 1, pmIgnore: true }).addTo(p.map);
+  else p.pointMarker.setLatLng(ll).addTo(p.map);
+  loadSeries(p);
 }
 
-async function selectEntity(cve) {
-  if (pointMarker) map.removeLayer(pointMarker);
-  selection = { type: 'entity', cve };
-  loadSeries();
+function setAreaLayer(p, layer) {
+  if (p.areaLayer) p.map.removeLayer(p.areaLayer);     // una sola área activa
+  p.areaLayer = layer;
+  layer.on('pm:edit pm:dragend', () => selectArea(p));
+  layer.on('click', ev => { L.DomEvent.stopPropagation(ev); if (!busyDrawing(p)) selectArea(p); });
+  selectArea(p);
+}
+
+function selectArea(p, name) {
+  if (!p.areaLayer) return;
+  if (p.pointMarker) p.map.removeLayer(p.pointMarker);
+  clearEntityMenus(p);
+  const isRect = p.areaLayer instanceof L.Rectangle;
+  p.selection = { type: 'area', geometry: p.areaLayer.toGeoJSON().geometry,
+    name: name ?? (isRect ? 'Rectángulo dibujado' : 'Polígono dibujado') };
+  loadSeries(p);
+}
+
+function selectMexico(p) {
+  if (p.pointMarker) p.map.removeLayer(p.pointMarker);
+  clearEntityMenus(p);
+  p.selection = { type: 'entity', cve: '00' };
+  loadSeries(p);
+}
+
+async function selectEntity(p, cve) {
+  if (p.pointMarker) p.map.removeLayer(p.pointMarker);
+  p.selection = { type: 'entity', cve };
+  loadSeries(p);
+  const statesGeo = await statesGeoP;
   const state = statesGeo?.features.find(f => f.properties.CVE_ENT === cve.slice(0, 2));
   const feat = cve.length === 2 ? state
     : (await getMunicipios(cve.slice(0, 2))).features.find(f => f.properties.CVEGEO === cve);
-  setHighlight(feat, state);
+  setHighlight(p, feat, state);
 }
 
-async function fetchSeries() {
-  const common = { freq: $('freq').value, start: $('start').value, end: $('end').value };
-  if (selection.type === 'point')
-    return getJSON('/api/timeseries/point?' + new URLSearchParams({ ...common, lat: selection.lat, lon: selection.lon }));
-  if (selection.type === 'area')
+// ---------------- Series ----------------
+function fetchSeries(p) {
+  const s = p.selection;
+  const common = { freq: p.el('freq').value, start: p.el('start').value, end: p.el('end').value };
+  if (s.type === 'point')
+    return getJSON('/api/timeseries/point?' + new URLSearchParams({ ...common, lat: s.lat, lon: s.lon }));
+  if (s.type === 'area')
     return getJSON('/api/timeseries/polygon', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...common, geometry: selection.geometry, name: selection.name }) });
-  try {
-    return await getJSON(`/api/timeseries/entity/${selection.cve}?` + new URLSearchParams(common));
-  } catch (e) {   // sin series precalculadas: México por rectángulo como respaldo
-    if (selection.cve !== '00') throw e;
+      body: JSON.stringify({ ...common, geometry: s.geometry, name: s.name }) });
+  return getJSON(`/api/timeseries/entity/${s.cve}?` + new URLSearchParams(common)).catch(e => {
+    // sin series precalculadas: México por rectángulo como respaldo
+    if (s.cve !== '00') throw e;
     return getJSON('/api/timeseries/region?' + new URLSearchParams(common));
-  }
+  });
 }
 
-async function loadSeries() {
-  if (!selection) return;
-  $('selType').textContent = selection.type === 'entity'
-    ? (selection.cve === '00' ? 'México' : selection.cve.length === 2 ? 'Estado' : 'Municipio')
-    : { point: 'Punto', area: 'Área' }[selection.type];
-  $('selName').textContent = 'Cargando…';
+async function loadSeries(p) {
+  if (!p.selection) return;
+  const s = p.selection, req = ++p.seriesReq;
+  p.el('selType').textContent = s.type === 'entity'
+    ? (s.cve === '00' ? 'México' : s.cve.length === 2 ? 'Estado' : 'Municipio')
+    : { point: 'Punto', area: 'Área' }[s.type];
+  p.el('selName').textContent = 'Cargando…';
   try {
-    const d = await fetchSeries();
-    const name = selection.type === 'entity' && selection.cve === '00' ? 'Promedio de México' : d.label;
-    $('selName').textContent = name;
-    const daily = d.freq === 'D';
-    const unit = daily ? 'mm/día' : 'mm';
-    const trace = daily
-      ? { type: 'scatter', mode: 'lines', x: d.dates, y: d.values, line: { color: css('--series'), width: 1.5 },
-          hovertemplate: `%{x|%d %b %Y}<br><b>%{y:.1f} ${unit}</b><extra></extra>` }
-      : { type: 'bar', x: d.dates, y: d.values, marker: { color: css('--series') },
-          hovertemplate: `%{x|${d.freq === 'YS' ? '%Y' : d.freq === 'MS' ? '%b %Y' : 'semana del %d %b %Y'}}<br><b>%{y:.1f} ${unit}</b><extra></extra>` };
-    const grid = dark ? '#2a303b' : '#e6e9ef';
-    const layout = {
-      paper_bgcolor: css('--card'), plot_bgcolor: css('--card'), font: { color: css('--text'), size: 12 },
-      margin: { l: 56, r: 16, t: 10, b: 40 }, bargap: 0.15, hovermode: 'x',
-      yaxis: { title: { text: daily ? 'mm/día' : 'mm acumulados' }, gridcolor: grid, zeroline: false, rangemode: 'tozero' },
-      xaxis: { type: 'date', gridcolor: grid, rangeslider: { visible: true, thickness: 0.08 } },
-    };
-    await Plotly.react('ts', [trace], layout, { responsive: true, displaylogo: false });
-
-    const s = d.stats;
-    const tiles = [
-      ['Total del periodo', `${fmt(s.total_mm)} mm`],
-      [`Promedio ${{ D: 'diario', W: 'semanal', MS: 'mensual', YS: 'anual' }[d.freq]}`, `${fmt(s.mean)} ${unit}`],
-      ['Máximo', `${fmt(s.max)} ${unit}`],
-      ['Fecha del máximo', s.max_date ?? '—'],
-    ];
-    if (d.area_km2 != null) {
-      tiles.push(['Área con datos', `${fmt(d.area_km2, 0)} km²`]);
-      tiles.push(['Volumen precipitado', `${fmt(s.volume_hm3, 0)} hm³`]);
-    }
-    $('stats').innerHTML = tiles.map(([k, v]) => `<div class="stat"><span>${k}</span><b>${v}</b></div>`).join('');
+    const d = await fetchSeries(p);
+    if (req !== p.seriesReq) return;   // el usuario ya eligió otra cosa
+    d.displayName = s.type === 'entity' && s.cve === '00' ? 'Promedio de México' : d.label;
+    p.series = d;
   } catch (e) {
-    $('selName').textContent = '—';
-    $('stats').innerHTML = `<span class="err">${e.message}</span>`;
-    Plotly.purge('ts');
+    if (req !== p.seriesReq) return;
+    p.series = null;
+    p.el('selName').textContent = '—';
+    p.el('stats').innerHTML = `<span class="err">${e.message}</span>`;
+    Plotly.purge(p.el('ts'));
+  }
+  renderSeries();
+}
+
+// Con escala compartida, ambas series usan el mismo eje Y (solo si tienen la misma agregación/unidades)
+function renderSeries() {
+  const ps = visible().filter(p => p.series);
+  const comparable = ps.length > 1 && ps[0].series.freq === ps[1].series.freq;
+  const ymax = sharedScale() && comparable
+    ? Math.max(1, ...ps.flatMap(p => p.series.values.filter(v => v != null))) * 1.05
+    : null;
+  for (const p of ps) plotSeries(p, ymax);
+}
+
+function plotSeries(p, ymax) {
+  const d = p.series, color = css(SERIES_COLOR[p.k]);
+  p.el('selName').textContent = d.displayName;
+  const daily = d.freq === 'D';
+  const unit = daily ? 'mm/día' : 'mm';
+  const trace = daily
+    ? { type: 'scatter', mode: 'lines', x: d.dates, y: d.values, line: { color, width: 1.5 },
+        hovertemplate: `%{x|%d %b %Y}<br><b>%{y:.1f} ${unit}</b><extra></extra>` }
+    : { type: 'bar', x: d.dates, y: d.values, marker: { color },
+        hovertemplate: `%{x|${d.freq === 'YS' ? '%Y' : d.freq === 'MS' ? '%b %Y' : 'semana del %d %b %Y'}}<br><b>%{y:.1f} ${unit}</b><extra></extra>` };
+  const grid = dark ? '#2a303b' : '#e6e9ef';
+  const layout = {
+    paper_bgcolor: css('--card'), plot_bgcolor: css('--card'), font: { color: css('--text'), size: 12 },
+    margin: { l: 56, r: 16, t: 10, b: 40 }, bargap: 0.15, hovermode: 'x',
+    yaxis: { title: { text: daily ? 'mm/día' : 'mm acumulados' }, gridcolor: grid, zeroline: false,
+      ...(ymax ? { range: [0, ymax], autorange: false } : { rangemode: 'tozero', autorange: true }) },
+    xaxis: { type: 'date', gridcolor: grid, rangeslider: { visible: true, thickness: 0.08 } },
+  };
+  Plotly.react(p.el('ts'), [trace], layout, { responsive: true, displaylogo: false });
+  renderStats(p);
+}
+
+// En B (modo comparación) cada indicador muestra la diferencia contra A
+function delta(p, key) {
+  const a = panels.A?.series, b = p.series;
+  if (p.k !== 'B' || !isCompare() || !a || a.freq !== b.freq) return '';
+  const va = a.stats[key], vb = b.stats[key];
+  if (va == null || vb == null || va === 0) return '';
+  const pct = (vb - va) / va * 100;
+  return `<small class="${pct >= 0 ? 'up' : 'down'}">${pct >= 0 ? '+' : ''}${fmt(pct)}% vs A</small>`;
+}
+
+function renderStats(p) {
+  const d = p.series, s = d.stats, unit = d.freq === 'D' ? 'mm/día' : 'mm';
+  const tiles = [
+    ['Total del periodo', `${fmt(s.total_mm)} mm`, 'total_mm'],
+    [`Promedio ${{ D: 'diario', W: 'semanal', MS: 'mensual', YS: 'anual' }[d.freq]}`, `${fmt(s.mean)} ${unit}`, 'mean'],
+    ['Máximo', `${fmt(s.max)} ${unit}`, 'max'],
+    ['Fecha del máximo', s.max_date ?? '—'],
+  ];
+  if (d.area_km2 != null) {
+    tiles.push(['Área con datos', `${fmt(d.area_km2, 0)} km²`]);
+    tiles.push(['Volumen precipitado', `${fmt(s.volume_hm3, 0)} hm³`, 'volume_hm3']);
+  }
+  p.el('stats').innerHTML = tiles.map(([k, v, key]) =>
+    `<div class="stat"><span>${k}</span><b>${v}</b>${key ? delta(p, key) : ''}</div>`).join('');
+}
+
+// ---------------- Comparación ----------------
+async function copyAtoB() {
+  const A = panels.A, B = panels.B;
+  for (const f of ['mapStart', 'mapEnd', 'freq', 'start', 'end']) B.el(f).value = A.el(f).value;
+  loadMap(B);
+  const s = A.selection;
+  if (!s) return;
+  if (s.type === 'point') selectPoint(B, s.lat, s.lon);
+  else if (s.type === 'area') {
+    const layer = L.geoJSON(s.geometry, { style: () => ({ color: css('--area'), weight: 2, fillOpacity: 0.08 }) }).getLayers()[0];
+    layer.addTo(B.map);
+    if (B.areaLayer) B.map.removeLayer(B.areaLayer);
+    B.areaLayer = layer;
+    layer.on('pm:edit pm:dragend', () => selectArea(B));
+    layer.on('click', ev => { L.DomEvent.stopPropagation(ev); if (!busyDrawing(B)) selectArea(B); });
+    selectArea(B, s.name);
+  } else if (s.cve === '00') selectMexico(B);
+  else {
+    await fillMunMenu(B, s.cve.slice(0, 2));
+    B.el('qEnt').value = s.cve.slice(0, 2);
+    B.el('qMun').value = s.cve.length > 2 ? s.cve : '';
+    selectEntity(B, s.cve);
   }
 }
-$('freq').onchange = loadSeries;
+
+async function setCompare(on) {
+  document.body.classList.toggle('compare', on);
+  if (on && !panels.B) {
+    await createPanel('B');          // se crea al mostrarse para que Leaflet mida bien el contenedor
+    await copyAtoB();
+  }
+  // Leaflet y Plotly deben recalcular su tamaño tras el cambio de columnas
+  requestAnimationFrame(() => {
+    for (const p of visible()) p.map.invalidateSize();
+    if (on) syncMaps(panels.A);
+    renderRasters(); renderSeries();
+    window.dispatchEvent(new Event('resize'));
+  });
+}
 
 // ---------------- Inicio ----------------
 async function init() {
-  const info = await getJSON('/api/info');
+  info = await getJSON('/api/info');
   $('meta').textContent = `${info.start} → ${info.end} · ${info.n_days.toLocaleString('es-MX')} días · resolución ${info.resolution_deg}°`;
-  for (const id of ['start', 'end', 'mapStart', 'mapEnd']) { $(id).min = info.start; $(id).max = info.end; }
-  $('start').value = info.start; $('end').value = info.end;
-  const y = info.end.slice(0, 4);
-  $('mapStart').value = `${y}-01-01` < info.start ? info.start : `${y}-01-01`;
-  $('mapEnd').value = info.end;
-  await Promise.all([loadMap(), loadCatalog().catch(() => {})]);
-  selectMexico();
+  const A = await createPanel('A');
+  await loadMap(A);
+  selectMexico(A);
+
+  $('compare').onchange = e => setCompare(e.target.checked);
+  $('shared').onchange = () => { renderRasters(); renderSeries(); };
+  $('syncMaps').onchange = e => e.target.checked && syncMaps(panels.A);
+  $('copyAB').onclick = () => { copyAtoB(); syncMaps(panels.A); };
 }
 init().catch(e => $('meta').innerHTML = `<span class="err">Error: ${e.message}</span>`);
 </script>
