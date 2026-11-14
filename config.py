@@ -38,3 +38,10 @@ NC_CHUNKS = {"time": 366, "lat": 40, "lon": 40}   # chunks en disco
 BOUNDARIES_DIR = BASE_DIR / "data" / "boundaries"
 ZONAL_GPKG = BOUNDARIES_DIR / "inegi_zonal.gpkg"          # geometrías para el cálculo
 ZONAL_SERIES = PROCESSED_DIR / "zonal_series.nc"          # series diarias precalculadas
+
+# --- IMERG Final V07 MENSUAL (climatologías, SPI, tendencias de largo plazo) ----
+MONTHLY_CONCEPT_ID = "C2723754851-GES_DISC"   # GPM_3IMERGM v07, verificado en CMR (nov-2026): 1998-01 → 2025-09
+MONTHLY_START = "1998-01-01"
+RAW_MONTHLY_DIR = BASE_DIR / "data" / "raw_monthly"
+MONTHLY_FILE = PROCESSED_DIR / "imerg_mexico_monthly.nc"
+ZONAL_MONTHLY = PROCESSED_DIR / "zonal_monthly.nc"
