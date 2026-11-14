@@ -8,6 +8,7 @@ Uso:
     python process.py --no-mask   # no reaplicar máscara local
 """
 import argparse
+import re
 import sys
 
 import numpy as np
@@ -20,6 +21,7 @@ def open_raw() -> xr.DataArray:
     files = sorted(config.RAW_DIR.rglob("*.nc*"))
     if not files:
         sys.exit(f"No hay archivos en {config.RAW_DIR}. Corre download.py primero.")
+    files = dedupe_by_date(files)
     ok = []
     for f in files:   # descarta archivos truncados (p. ej. si se cortó la descarga)
         try:
@@ -38,6 +40,19 @@ def open_raw() -> xr.DataArray:
     pr.name = "precipitation"
     pr.attrs = {"long_name": "Precipitación total diaria (IMERG Final V07)", "units": "mm/day"}
     return pr
+
+
+def dedupe_by_date(files):
+    """Si un día se descargó dos veces (descarga reanudada), usa solo el archivo más reciente."""
+    by_date = {}
+    for f in files:
+        m = re.search(r"3IMERG\.(\d{8})-", f.name)
+        key = m.group(1) if m else f.name
+        if key not in by_date or f.stat().st_mtime > by_date[key].stat().st_mtime:
+            by_date[key] = f
+    if len(by_date) < len(files):
+        print(f"ℹ {len(files) - len(by_date)} archivos duplicados ignorados (mismo día)")
+    return sorted(by_date.values())
 
 
 def mexico_mask(pr: xr.DataArray) -> xr.DataArray:

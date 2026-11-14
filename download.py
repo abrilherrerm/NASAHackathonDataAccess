@@ -11,6 +11,7 @@ Uso:
 """
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -74,10 +75,14 @@ def main() -> None:
     for t0, t1 in month_chunks(args.start, args.end):
         out_dir = config.RAW_DIR / t0.strftime("%Y-%m")
         expected_days = (t1.date() - t0.date()).days + 1
-        if out_dir.exists() and len(list(out_dir.glob("*.nc*"))) >= expected_days:
+        days_present = {re.search(r"3IMERG\.(\d{8})-", f.name).group(1)
+                        for f in out_dir.glob("*.nc*") if re.search(r"3IMERG\.(\d{8})-", f.name)}
+        if len(days_present) >= expected_days:
             print(f"↷ {t0:%Y-%m} completo, se omite")
             continue
         out_dir.mkdir(parents=True, exist_ok=True)
+        for partial in out_dir.glob("*.nc*"):   # restos de un intento anterior incompleto
+            partial.unlink()
 
         request = Request(
             collection=collection,

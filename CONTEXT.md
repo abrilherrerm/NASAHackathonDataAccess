@@ -100,8 +100,8 @@ imerg_mexico/
 
 `freq`: `D` diaria, `W` semanal, `MS` mensual, `YS` anual (sumas). Swagger en `/docs`.
 
-Detalles: el dataset se abre una sola vez (`lru_cache`), así que **tras correr `process.py`
-hay que reiniciar uvicorn** (`--reload` solo vigila archivos `.py`). Áreas dibujadas también se
+Detalles: los NetCDF se abren una vez y se reabren solos si `process.py` los reescribe
+(no hace falta reiniciar uvicorn). Áreas dibujadas también se
 promedian por fracción de celda (`zonal.polygon_weights`). Volumen: `mm × km² / 1000 = hm³`.
 
 ## 6. Frontend
@@ -146,3 +146,5 @@ promedian por fracción de celda (`zonal.polygon_weights`). Volumen: `mm × km²
 | Mapa base con "API KEY REQUIRED" | CARTO exige clave | Cambio a Esri |
 | Mapa gris vacío | Comentario `//` a media línea anuló `.fitBounds()` | Comentario en su propia línea |
 | Descarga atorada en un mes (sin avanzar) | Descarga HTTP colgada | `Ctrl+C` y volver a correr `download.py` (reanuda y repite el mes incompleto) |
+| Días duplicados (p. ej. 2022-11 con 52 archivos) | Al reanudar, Harmony baja el mes otra vez con otro prefijo de job | `download.py` borra restos del mes incompleto antes de reintentar y cuenta días únicos; `process.py` usa un archivo por fecha |
+| API no veía datos nuevos | `lru_cache` del dataset | Se recarga sola cuando cambia la fecha de modificación de los NetCDF |

@@ -31,20 +31,33 @@ Freq = Literal["D", "W", "MS", "YS"]
 FREQ_LABEL = {"D": "diaria", "W": "semanal", "MS": "mensual", "YS": "anual"}
 
 
+def _signature(paths) -> tuple:
+    return tuple((str(p), p.stat().st_mtime) for p in paths if p.exists())
+
+
 @lru_cache(maxsize=1)
+def _open_daily(sig: tuple) -> xr.Dataset:
+    # Abrir perezosamente respetando los chunks guardados en disco
+    return xr.open_mfdataset([p for p, _ in sig], combine="by_coords", chunks={})
+
+
 def dataset() -> xr.Dataset:
+    """Se vuelve a abrir solo si process.py reescribió los archivos (no hace falta reiniciar)."""
     files = sorted(config.PROCESSED_DIR.glob("imerg_mexico_daily_*.nc"))
     if not files:
         raise HTTPException(503, "No hay datos procesados. Corre download.py y process.py.")
-    # Abrir perezosamente respetando los chunks guardados en disco
-    return xr.open_mfdataset(files, combine="by_coords", chunks={})
+    return _open_daily(_signature(files))
 
 
 @lru_cache(maxsize=1)
+def _open_zonal(sig: tuple) -> xr.Dataset:
+    return xr.open_dataset(sig[0][0]).load()   # ~18 MB con 5 años: cabe en memoria
+
+
 def zonal_dataset() -> xr.Dataset:
     if not config.ZONAL_SERIES.exists():
         raise HTTPException(503, "No hay series por entidad. Corre make_boundaries.py y zonal.py.")
-    return xr.open_dataset(config.ZONAL_SERIES).load()   # ~18 MB con 5 años: cabe en memoria
+    return _open_zonal(_signature([config.ZONAL_SERIES]))
 
 
 def _slice(da: xr.DataArray, start: str | None, end: str | None) -> xr.DataArray:
@@ -209,7 +222,8 @@ def precip_map(start: str, end: str | None = None, step: int = Query(2, ge=1, le
     """Acumulado en [start, end] para pintar el mapa (submuestreado cada `step` celdas)."""
     da = _slice(dataset()["precipitation"], start, end or start)
     if da.sizes["time"] == 0:
-        raise HTTPException(404, "Sin datos en esas fechas.")
+        raise HTTPException(404, f"Sin datos procesados entre {start} y {end or start}. "
+                                 f"Si ya se descargaron, corre process.py.")
     acc = da.sum("time", min_count=1).isel(lat=slice(None, None, step), lon=slice(None, None, step)).load()
     z = np.where(np.isnan(acc.values), None, np.round(acc.values, 1))
     return {"lat": acc.lat.values.round(3).tolist(), "lon": acc.lon.values.round(3).tolist(),
