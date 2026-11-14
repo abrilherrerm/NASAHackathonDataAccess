@@ -64,10 +64,29 @@ def _slice(da: xr.DataArray, start: str | None, end: str | None) -> xr.DataArray
     return da.sel(time=slice(start, end))
 
 
+def late_start() -> pd.Timestamp | None:
+    """Primer día con dato preliminar (IMERG Late), o None si todo es Final."""
+    ds = dataset()
+    if "is_late" not in ds:
+        return None
+    late = ds["is_late"].values == 1
+    return pd.Timestamp(ds.time.values[late.argmax()]) if late.any() else None
+
+
+def _late_from(s: pd.Series, freq: str) -> str | None:
+    lf = late_start()
+    if lf is None or s.empty:
+        return None
+    last = s.index.max()
+    period_end = last if freq in ("D", "W") else last + pd.tseries.frequencies.to_offset(freq) - pd.Timedelta(days=1)
+    return str(lf.date()) if period_end >= lf else None
+
+
 def _series_payload(s: pd.Series, freq: str, **meta) -> dict:
     s = s.astype("float64").round(2)
     return {
         **meta,
+        "late_from": _late_from(s, freq),
         "freq": freq,
         "units": "mm/día" if freq == "D" else "mm (acumulado)",
         "dates": s.index.strftime("%Y-%m-%d").tolist(),
@@ -83,7 +102,8 @@ def _series_payload(s: pd.Series, freq: str, **meta) -> dict:
 
 def _resample(da: xr.DataArray, freq: str) -> pd.Series:
     s = da.to_series()
-    return s if freq == "D" else s.resample(freq).sum(min_count=1)
+    # Diario: días sin datos quedan como null (huecos visibles, no líneas que los atraviesan)
+    return s.asfreq("D") if freq == "D" else s.resample(freq).sum(min_count=1)
 
 
 @app.get("/api/info")
@@ -94,6 +114,7 @@ def info():
         "start": str(pd.Timestamp(t[0]).date()),
         "end": str(pd.Timestamp(t[-1]).date()),
         "n_days": int(t.size),
+        "late_from": str(late_start().date()) if late_start() is not None else None,
         "bbox": config.MEXICO_BBOX,
         "resolution_deg": round(float(abs(ds.lat[1] - ds.lat[0])), 3),
     }

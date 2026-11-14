@@ -6,8 +6,9 @@ Credenciales (NASA Earthdata Login), en este orden:
   3. Si no hay ninguno, te las pide en la terminal y las guarda en ~/.netrc
 
 Uso:
-    python download.py                                      # 5 años completos
+    python download.py                                      # 2014-06 → hoy (Final + Late)
     python download.py --start 2025-01-01 --end 2025-01-31  # prueba de 1 mes
+    python download.py --run final                          # solo Final (sin datos preliminares)
 """
 import argparse
 import os
@@ -62,23 +63,48 @@ def month_chunks(start: str, end: str):
         yield t0.to_pydatetime(), t1.to_pydatetime()
 
 
-def main() -> None:
-    p = argparse.ArgumentParser()
-    p.add_argument("--start", default=config.START_DATE)
-    p.add_argument("--end", default=config.END_DATE)
-    args = p.parse_args()
+def last_available(concept_id: str) -> pd.Timestamp:
+    """Último día disponible: fin declarado de la colección o, si sigue activa, último granulo."""
+    col = earthaccess.search_datasets(concept_id=concept_id)[0]["umm"]
+    rng = col["TemporalExtents"][0]["RangeDateTimes"][0]
+    if rng.get("EndingDateTime") and not col["TemporalExtents"][0].get("EndsAtPresentFlag"):
+        return pd.Timestamp(rng["EndingDateTime"][:10])
+    today = pd.Timestamp.today().normalize()
+    grans = earthaccess.search_data(concept_id=concept_id,
+                                    temporal=((today - pd.Timedelta(days=60)).strftime("%Y-%m-%d"),
+                                              today.strftime("%Y-%m-%d")))
+    if not grans:
+        sys.exit(f"Sin granulos recientes para {concept_id}")
+    return max(pd.Timestamp(g["umm"]["TemporalExtent"]["RangeDateTime"]["BeginningDateTime"][:10]) for g in grans)
 
-    harmony = login()
-    shape = mexico_geojson()
-    collection = Collection(id=config.CONCEPT_ID)
 
-    for t0, t1 in month_chunks(args.start, args.end):
-        out_dir = config.RAW_DIR / t0.strftime("%Y-%m")
+def plan(start: str, end: str | None, run: str):
+    """Tramos (run, inicio, fin): Final hasta su último día; Late después (si run='auto')."""
+    final_end = last_available(config.RUNS["final"]["concept_id"])
+    late_end = last_available(config.RUNS["late"]["concept_id"])
+    end_ts = pd.Timestamp(end) if end else (late_end if run != "final" else final_end)
+    start_ts = pd.Timestamp(start)
+    print(f"ℹ Final disponible hasta {final_end.date()}, Late hasta {late_end.date()}")
+    segs = []
+    if run in ("auto", "final") and start_ts <= min(end_ts, final_end):
+        segs.append(("final", start_ts, min(end_ts, final_end)))
+    if run == "late":
+        segs.append(("late", start_ts, min(end_ts, late_end)))
+    elif run == "auto" and end_ts > final_end:
+        segs.append(("late", max(start_ts, final_end + pd.Timedelta(days=1)), min(end_ts, late_end)))
+    return segs
+
+
+def download_segment(harmony, shape, run: str, start, end) -> None:
+    cfg = config.RUNS[run]
+    collection = Collection(id=cfg["concept_id"])
+    for t0, t1 in month_chunks(start, end):
+        out_dir = cfg["raw_dir"] / t0.strftime("%Y-%m")
         expected_days = (t1.date() - t0.date()).days + 1
         days_present = {re.search(r"3IMERG\.(\d{8})-", f.name).group(1)
                         for f in out_dir.glob("*.nc*") if re.search(r"3IMERG\.(\d{8})-", f.name)}
         if len(days_present) >= expected_days:
-            print(f"↷ {t0:%Y-%m} completo, se omite")
+            print(f"↷ [{run}] {t0:%Y-%m} completo, se omite")
             continue
         out_dir.mkdir(parents=True, exist_ok=True)
         for partial in out_dir.glob("*.nc*"):   # restos de un intento anterior incompleto
@@ -94,10 +120,25 @@ def main() -> None:
             sys.exit(f"Petición inválida: {request.error_messages()}")
 
         job_id = harmony.submit(request)
-        print(f"→ {t0:%Y-%m}: job Harmony {job_id}")
+        print(f"→ [{run}] {t0:%Y-%m}: job Harmony {job_id}")
         harmony.wait_for_processing(job_id, show_progress=True)
         files = [f.result() for f in harmony.download_all(job_id, directory=str(out_dir), overwrite=True)]
-        print(f"✔ {t0:%Y-%m}: {len(files)} archivos")
+        print(f"✔ [{run}] {t0:%Y-%m}: {len(files)} archivos")
+
+
+def main() -> None:
+    p = argparse.ArgumentParser()
+    p.add_argument("--start", default=config.START_DATE)
+    p.add_argument("--end", default=config.END_DATE, help="por defecto: lo más reciente disponible")
+    p.add_argument("--run", choices=["auto", "final", "late"], default="auto",
+                   help="auto = Final donde exista y Late después (por defecto)")
+    args = p.parse_args()
+
+    harmony = login()
+    shape = mexico_geojson()
+    for run, t0, t1 in plan(args.start, args.end, args.run):
+        print(f"=== {run.upper()}: {t0.date()} → {t1.date()} ===")
+        download_segment(harmony, shape, run, t0, t1)
 
 
 if __name__ == "__main__":

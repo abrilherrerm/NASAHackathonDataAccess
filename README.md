@@ -15,7 +15,7 @@ en la terminal y los guarda en `~/.netrc` para siempre.
 ```bash
 source .venv/bin/activate
 python download.py --start 2025-01-01 --end 2025-01-31   # prueba de 1 mes
-python download.py                                     # 5 años: 2020-10-01 → 2025-09-30 (60 jobs)
+python download.py                                     # 2014-06 → hoy: Final + Late (preliminar) donde no hay Final
 python make_boundaries.py                              # límites INEGI (una vez, ~5 min la 1ª vez)
 python process.py                                      # -> NetCDF anuales + series por estado/municipio
 uvicorn app.main:app --reload                          # http://127.0.0.1:8000  ·  /docs
@@ -23,6 +23,8 @@ uvicorn app.main:app --reload                          # http://127.0.0.1:8000  
 Sin cuenta, para probar la API: `python make_demo_data.py` (datos SINTÉTICOS; process.py los sobrescribe).
 
 ## Producto
+> Desde la última fecha Final se usa **IMERG Late** (`GPM_3IMERGDL_07`, preliminar). Cada día queda marcado (`is_late`) y la interfaz lo señala. `python download.py --run final` evita usar Late.
+
 **GPM_3IMERGDF_07** (`C2723754864-GES_DISC`): IMERG Final Run **diario**, 0.1°, global (cubre México),
 variable `precipitation` en mm/día (= total diario acumulado de los HH de 30 min).
 Disponible 1998-01-01 → 2025-09-30 (latencia ~3.5 meses; ajusta `START_DATE`/`END_DATE` en `config.py` cuando haya más).

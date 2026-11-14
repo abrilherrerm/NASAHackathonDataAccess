@@ -77,6 +77,7 @@
   .legend .ticks { display:flex; justify-content:space-between; color:var(--muted); font-variant-numeric:tabular-nums; }
   .readout { min-width:170px; }
   .leaflet-tooltip.state-tip { font-size:12px; padding:2px 6px; }
+
 </style>
 </head>
 <body>
@@ -371,7 +372,8 @@ function drawRaster(p, d, vmax, shared = false) {
   p.legend.innerHTML = `<div>Precipitación acumulada (mm)${shared ? ' · escala A = B' : ''}</div>
     <div class="bar" style="background:linear-gradient(to right, ${RAMP.join(',')})"></div>
     <div class="ticks"><span>0</span><span>${fmt(vmax / 2, 0)}</span><span>≥ ${fmt(vmax, 0)}</span></div>
-    <div style="color:var(--muted)">${d.start} → ${d.end}</div>`;
+    <div style="color:var(--muted)">${d.start} → ${d.end}</div>${info?.late_from && (d.end ?? d.start) >= info.late_from
+      ? `<div style="color:var(--muted)">Incluye datos preliminares (Late) desde ${info.late_from}</div>` : ''}`;
 }
 
 // Redibuja los mapas visibles; con escala compartida ambos usan el mismo máximo (percentil 98 mayor)
@@ -496,25 +498,61 @@ function renderSeries() {
   for (const p of ps) plotSeries(p, ymax);
 }
 
+// Fin del periodo que representa cada barra/punto (para saber si incluye días preliminares)
+function periodEnd(date, freq) {
+  if (freq === 'D' || freq === 'W') return date;           // W: la etiqueta ya es el fin de semana
+  const t = new Date(date + 'T00:00:00Z');
+  t.setUTCMonth(t.getUTCMonth() + (freq === 'YS' ? 12 : 1)); t.setUTCDate(t.getUTCDate() - 1);
+  return t.toISOString().slice(0, 10);
+}
+
 function plotSeries(p, ymax) {
   const d = p.series, color = css(SERIES_COLOR[p.k]);
   p.el('selName').textContent = d.displayName;
   const daily = d.freq === 'D';
   const unit = daily ? 'mm/día' : 'mm';
-  const trace = daily
-    ? { type: 'scatter', mode: 'lines', x: d.dates, y: d.values, line: { color, width: 1.5 },
-        hovertemplate: `%{x|%d %b %Y}<br><b>%{y:.1f} ${unit}</b><extra></extra>` }
-    : { type: 'bar', x: d.dates, y: d.values, marker: { color },
-        hovertemplate: `%{x|${d.freq === 'YS' ? '%Y' : d.freq === 'MS' ? '%b %Y' : 'semana del %d %b %Y'}}<br><b>%{y:.1f} ${unit}</b><extra></extra>` };
+  const xfmt = daily ? '%d %b %Y' : d.freq === 'YS' ? '%Y' : d.freq === 'MS' ? '%b %Y' : 'semana del %d %b %Y';
+
+  // Final vs Late (preliminar): dos trazas con codificación distinta además del color
+  const late = d.dates.map(x => !!d.late_from && periodEnd(x, d.freq) >= d.late_from);
+  const pick = want => d.values.map((v, i) => (late[i] === want ? v : null));
+  const hover = tag => `%{x|${xfmt}}<br><b>%{y:.1f} ${unit}</b>${tag}<extra></extra>`;
+  const lateTag = daily ? '<br><i>preliminar (IMERG Late)</i>' : '<br><i>incluye datos preliminares (Late)</i>';
+  const hasLate = late.some(Boolean);
+  let traces;
+  if (daily) {
+    const firstLate = late.indexOf(true);
+    const lateY = pick(true);
+    if (firstLate > 0) lateY[firstLate - 1] = d.values[firstLate - 1];   // une ambas líneas sin hueco
+    traces = [
+      { type: 'scatter', mode: 'lines', name: 'Final', x: d.dates, y: pick(false),
+        line: { color, width: 1.5 }, hovertemplate: hover('') },
+      { type: 'scatter', mode: 'lines', name: 'Preliminar (IMERG Late)', x: d.dates, y: lateY,
+        line: { color, width: 1.5, dash: 'dot' }, hovertemplate: hover(lateTag), visible: hasLate },
+    ];
+  } else {
+    traces = [
+      { type: 'bar', name: 'Final', x: d.dates, y: pick(false), marker: { color }, hovertemplate: hover('') },
+      { type: 'bar', name: 'Preliminar (IMERG Late)', x: d.dates, y: pick(true), hovertemplate: hover(lateTag),
+        marker: { color, pattern: { shape: '/', fillmode: 'overlay', fgcolor: css('--card'), size: 7, solidity: 0.4 } },
+        visible: hasLate },
+    ];
+  }
   const grid = dark ? '#2a303b' : '#e6e9ef';
   const layout = {
     paper_bgcolor: css('--card'), plot_bgcolor: css('--card'), font: { color: css('--text'), size: 12 },
-    margin: { l: 56, r: 16, t: 10, b: 40 }, bargap: 0.15, hovermode: 'x',
+    margin: { l: 56, r: 16, t: hasLate ? 28 : 10, b: 40 }, bargap: 0.15, barmode: 'overlay', hovermode: 'x',
+    showlegend: hasLate, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom', font: { size: 11 } },
     yaxis: { title: { text: daily ? 'mm/día' : 'mm acumulados' }, gridcolor: grid, zeroline: false,
       ...(ymax ? { range: [0, ymax], autorange: false } : { rangemode: 'tozero', autorange: true }) },
     xaxis: { type: 'date', gridcolor: grid, rangeslider: { visible: true, thickness: 0.08 } },
   };
-  Plotly.react(p.el('ts'), [trace], layout, { responsive: true, displaylogo: false });
+  if (hasLate) {   // franja de fondo sobre el periodo preliminar
+    layout.shapes = [{ type: 'rect', xref: 'x', yref: 'paper', x0: d.late_from,
+      x1: periodEnd(d.dates[d.dates.length - 1], d.freq), y0: 0, y1: 1,
+      fillcolor: css('--muted'), opacity: 0.08, line: { width: 0 }, layer: 'below' }];
+  }
+  Plotly.react(p.el('ts'), traces, layout, { responsive: true, displaylogo: false });
   renderStats(p);
 }
 
@@ -587,7 +625,8 @@ async function setCompare(on) {
 // ---------------- Inicio ----------------
 async function init() {
   info = await getJSON('/api/info');
-  $('meta').textContent = `${info.start} → ${info.end} · ${info.n_days.toLocaleString('es-MX')} días · resolución ${info.resolution_deg}°`;
+  $('meta').textContent = `${info.start} → ${info.end} · ${info.n_days.toLocaleString('es-MX')} días · resolución ${info.resolution_deg}°`
+    + (info.late_from ? ` · preliminar (IMERG Late) desde ${info.late_from}` : '');
   const A = await createPanel('A');
   await loadMap(A);
   selectMexico(A);

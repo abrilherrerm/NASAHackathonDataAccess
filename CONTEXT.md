@@ -4,7 +4,7 @@ Documento para quien se sume al proyecto (personas o asistentes de IA): qué hac
 está hecho así, cómo está organizado, qué problemas ya se resolvieron y qué sigue.
 El README explica *cómo correrlo*; este archivo explica *el porqué*.
 
-_Última actualización: 2026-11-14 (límites INEGI y series zonales)_
+_Última actualización: 2026-11-14 (Final + Late, desde 2014-06; antes del análisis mensual)_
 
 ---
 
@@ -26,7 +26,8 @@ NASA CMR / Earthdata Login
 Harmony (HOSS) ── recorte con polígono de México (data/mexico.geojson), 1 job por mes
         │
         ▼
-data/raw/YYYY-MM/*.nc4        ← 1 archivo por día (~80 KB c/u, ~2.5 MB por mes)
+data/raw/YYYY-MM/*.nc4        ← Final: 1 archivo por día (~80 KB c/u, ~2.5 MB por mes)
+data/raw_late/YYYY-MM/*.nc4   ← Late (preliminar), solo después del último Final
         │  process.py (xarray + dask)
         ▼
 data/processed/imerg_mexico_daily_YYYY.nc   ← NetCDF anual, comprimido, chunks (366, 40, 40)
@@ -43,7 +44,8 @@ API /api/...  +  frontend app/static/index.html (Leaflet + Plotly)
 |---|---|
 | **Producto `GPM_3IMERGDF_07`** (diario Final), no `GPM_3IMERGHH_07` (30 min) | El HH en 5 años son ~87,600 archivos; el DF son ~1,826 y **ya es** la precipitación total diaria (acumulado de los HH). Mismo resultado, ~48× menos trabajo. |
 | Concept ID fijo `C2723754864-GES_DISC`, variable `precipitation` (mm/día) | Verificado en CMR. La versión V06 usaba `precipitationCal`; en V07 es `precipitation`. |
-| **Periodo 2020-10-01 → 2025-09-30** | El Final Run tiene ~3.5 meses de latencia; en nov-2026 el último dato en CMR era 2025-09-30. Ajustar `START_DATE`/`END_DATE` en `config.py` cuando haya más. |
+| **Periodo 2014-06-01 → hoy** | Inicio de la era GPM en IMERG (satélite GPM lanzado en feb-2014; calibración GPM desde jun-2014, mejor calidad que la era TRMM). Final (`GPM_3IMERGDF_07`) hasta su último día (2025-09-30 en nov-2026; ~3.5 meses de latencia). Después, **Late** (`GPM_3IMERGDL_07`, ~14 h de latencia) hasta ayer. `download.py` detecta ambas fechas en CMR. Los tres productos diarios V07 existen desde 1998-01-01. |
+| **Late solo donde no hay Final**, marcado por día (`is_late`) | Late es preliminar (sin calibración mensual con pluviómetros GPCC). Se guarda aparte en `data/raw_late/`; `process.py` prefiere Final si existen ambos, así que al volver a correr `download.py` cuando NASA publique el Final, éste reemplaza al Late. La API devuelve `late_from` y el front sombrea ese periodo. |
 | **Recorte con polígono GeoJSON en Harmony** (no solo bbox) | El servicio HOSS de esta colección soporta `Shapefile: GeoJSON`. Fuera del polígono queda `_FillValue`. `process.py` reaplica la máscara (regionmask, Natural Earth) como respaldo. |
 | **Chunks de descarga: 1 job de Harmony por mes** | Jobs chicos (~30 granulos), reanudables. Ritmo observado: **~1.5 min/mes → ~1.5 h** para 5 años. |
 | **Chunks en disco `(time=366, lat=40, lon=40)`**, un archivo por año | Una serie de tiempo por punto lee 1 bloque por año → respuestas en < 1 s. |
@@ -91,7 +93,7 @@ imerg_mexico/
 
 | Método | Ruta | Qué hace |
 |---|---|---|
-| GET | `/api/info` | Rango de fechas disponible, nº de días, bbox, resolución |
+| GET | `/api/info` | Rango de fechas disponible, nº de días, `late_from` (inicio de datos preliminares), bbox, resolución |
 | GET | `/api/timeseries/point?lat&lon&freq&start&end` | Serie en la celda más cercana |
 | GET | `/api/timeseries/region?west&south&east&north&freq` | Promedio en rectángulo (por defecto todo México) |
 | GET | `/api/timeseries/entity/{cvegeo}?freq&start&end` | Serie precalculada: estado (`20`), municipio (`20067`) o México (`00`) + `area_km2`, `stats.volume_hm3` |
@@ -110,6 +112,9 @@ promedian por fracción de celda (`zonal.polygon_weights`). Volumen: `mm × km²
 - Límites INEGI: estados siempre; "Ver municipios de [entidad]" carga solo esa entidad (línea punteada, nombre y CVEGEO al pasar el cursor). Atribución INEGI en el mapa.
 - Selección: **punto** (clic), **área** (rectángulo/polígono con Geoman; editable/movible), **estado/municipio** (menú "Consultar"; se resalta en naranja y se encuadra su estado), **México completo**.
 - Gráfica Plotly (línea si es diaria, barras si es agregada) + tarjetas: total, promedio, máximo y fecha; para áreas también km² y hm³.
+- **Final vs Late:** barras sólidas = Final, **rayadas** = Late; línea continua = Final, **punteada** = Late; leyenda "Final / Preliminar (IMERG Late)", franja gris sobre el periodo preliminar y "preliminar" en el tooltip. La leyenda del mapa y el encabezado avisan si el rango incluye Late.
+- Días sin datos se envían como `null` (huecos visibles, no líneas que los atraviesan).
+- Vista comparativa **A | B** (agregada por el equipo): dos paneles con escala compartida, mapas sincronizados y "Copiar A → B".
 
 ## 7. Entorno y credenciales
 
@@ -123,10 +128,13 @@ promedian por fracción de celda (`zonal.polygon_weights`). Volumen: `mm × km²
 - [x] Pipeline completo descarga → proceso → API → frontend, probado con datos reales.
 - [x] Selección por punto, área dibujada y México completo; límites estatales.
 
-**En curso**
-- [ ] Descarga completa de los 60 meses (al 14-nov-2026 iba en ~2022-11). Al terminar: `process.py` y reiniciar uvicorn.
-
 - [x] Límites oficiales INEGI (estados + municipios por entidad), menú de consulta, fracción de celda, series precalculadas.
+- [x] Vista comparativa A | B.
+- [x] 2020-01 → 2025-09 (Final) procesado y en el repo.
+- [x] Soporte Final + Late con marca por día (`is_late`) y distinción visual en el front.
+
+**En curso**
+- [ ] Descarga diaria completa `python download.py` (2014-06 → ayer: Final hasta 2025-09-30, Late después). Al terminar: `python process.py` (la API recarga sola).
 
 **Pendiente menor**
 - [ ] El recorte de Harmony (`data/mexico.geojson`) y la máscara de `process.py` siguen usando Natural Earth. Podría cambiarse a la unión de estados INEGI en una futura re-descarga (no urge: la diferencia es solo en celdas de costa).

@@ -6,17 +6,26 @@ RAW_DIR = BASE_DIR / "data" / "raw"              # salidas de Harmony (recortada
 PROCESSED_DIR = BASE_DIR / "data" / "processed"  # NetCDF diarios chunked
 MEXICO_GEOJSON = BASE_DIR / "data" / "mexico.geojson"
 
-# --- Producto: IMERG Final Run diario V07 (mm/día), global 0.1° -------------
-# Ya trae la precipitación total diaria (acumulado de los HH de 30 min).
-SHORT_NAME = "GPM_3IMERGDF"
+# --- Productos IMERG diarios V07 (mm/día), global 0.1° ------------------------
+# Final: calibrado con pluviómetros (GPCC), ~3.5 meses de latencia  -> referencia
+# Late : preliminar, ~14 h de latencia, sin calibración mensual     -> solo donde no hay Final
+RUNS = {
+    "final": {"short_name": "GPM_3IMERGDF", "concept_id": "C2723754864-GES_DISC", "raw_dir": RAW_DIR},
+    "late":  {"short_name": "GPM_3IMERGDL", "concept_id": "C2723754859-GES_DISC",
+              "raw_dir": BASE_DIR / "data" / "raw_late"},
+}
 VERSION = "07"
-CONCEPT_ID = "C2723754864-GES_DISC"   # verificado en CMR (nov-2026)
 VARIABLE = "precipitation"
 
-# --- Periodo: 5 años. El Final Run tiene ~3.5 meses de latencia; -------------
-# al 14-nov-2026 el último dato disponible es 2025-09-30.
-START_DATE = "2020-10-01"
-END_DATE = "2025-09-30"
+# Compatibilidad con código previo
+SHORT_NAME = RUNS["final"]["short_name"]
+CONCEPT_ID = RUNS["final"]["concept_id"]
+
+# --- Periodo -------------------------------------------------------------------
+# Final hasta su último día disponible; después, Late hasta el último disponible.
+# download.py consulta CMR para saber ambas fechas (END_DATE=None -> lo más reciente).
+START_DATE = "2014-06-01"   # inicio de la era GPM (mejores sensores)
+END_DATE = None
 
 # --- México: bbox (para metadatos/API) y polígono GeoJSON (para Harmony) -----
 MEXICO_BBOX = {"west": -118.5, "south": 14.4, "east": -86.6, "north": 32.8}
