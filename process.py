@@ -74,6 +74,13 @@ def main() -> None:
     pr = open_raw()
     save_yearly(pr if args.no_mask else mexico_mask(pr))
 
+    # Series precalculadas por estado/municipio (fracción de celda)
+    if config.ZONAL_GPKG.exists():
+        from zonal import compute_zonal_series
+        compute_zonal_series()
+    else:
+        print("ℹ Sin límites INEGI: corre make_boundaries.py y luego zonal.py para las series por entidad.")
+
 
 if __name__ == "__main__":
     main()

@@ -24,3 +24,8 @@ MEXICO_BBOX = {"west": -118.5, "south": 14.4, "east": -86.6, "north": 32.8}
 # --- Chunking -----------------------------------------------------------------
 REQUEST_CHUNK = "MS"   # un job de Harmony por mes (~30 granulos)
 NC_CHUNKS = {"time": 366, "lat": 40, "lon": 40}   # chunks en disco
+
+# --- Límites INEGI y series zonales (estados/municipios) ----------------------
+BOUNDARIES_DIR = BASE_DIR / "data" / "boundaries"
+ZONAL_GPKG = BOUNDARIES_DIR / "inegi_zonal.gpkg"          # geometrías para el cálculo
+ZONAL_SERIES = PROCESSED_DIR / "zonal_series.nc"          # series diarias precalculadas

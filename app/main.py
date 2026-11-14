@@ -7,19 +7,25 @@
 import sys
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
 import xarray as xr
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+import shapely
+from shapely.geometry import shape
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 import config  # noqa: E402
+from zonal import KM_PER_DEG, grid_res, polygon_weights  # noqa: E402
 
 app = FastAPI(title="IMERG México – Precipitación diaria", version="1.0")
+app.add_middleware(GZipMiddleware, minimum_size=1024)   # GeoJSON y JSON grandes viajan comprimidos
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 Freq = Literal["D", "W", "MS", "YS"]
 FREQ_LABEL = {"D": "diaria", "W": "semanal", "MS": "mensual", "YS": "anual"}
@@ -32,6 +38,13 @@ def dataset() -> xr.Dataset:
         raise HTTPException(503, "No hay datos procesados. Corre download.py y process.py.")
     # Abrir perezosamente respetando los chunks guardados en disco
     return xr.open_mfdataset(files, combine="by_coords", chunks={})
+
+
+@lru_cache(maxsize=1)
+def zonal_dataset() -> xr.Dataset:
+    if not config.ZONAL_SERIES.exists():
+        raise HTTPException(503, "No hay series por entidad. Corre make_boundaries.py y zonal.py.")
+    return xr.open_dataset(config.ZONAL_SERIES).load()   # ~18 MB con 5 años: cabe en memoria
 
 
 def _slice(da: xr.DataArray, start: str | None, end: str | None) -> xr.DataArray:
@@ -108,6 +121,87 @@ def region_series(
     mean = da.weighted(w).mean(("lat", "lon")).load()
     return _series_payload(_resample(mean, freq), freq, label="Promedio regional",
                            bbox={"west": west, "south": south, "east": east, "north": north})
+
+
+class PolygonRequest(BaseModel):
+    geometry: dict[str, Any]          # GeoJSON: Polygon, MultiPolygon, Feature o FeatureCollection
+    name: str | None = None
+    start: str | None = None
+    end: str | None = None
+    freq: Freq = "D"
+
+
+def _to_geometry(gj: dict):
+    if gj.get("type") == "FeatureCollection":
+        return shapely.union_all([shape(f["geometry"]) for f in gj["features"]])
+    if gj.get("type") == "Feature":
+        return shape(gj["geometry"])
+    return shape(gj)
+
+
+@app.post("/api/timeseries/polygon")
+def polygon_series(req: PolygonRequest):
+    """Precipitación promedio (ponderada por área) dentro de un polígono dibujado o de un estado.
+    Además devuelve el área con datos (km²) y el volumen precipitado (hm³) en el periodo."""
+    try:
+        geom = _to_geometry(req.geometry)
+    except Exception as e:
+        raise HTTPException(422, f"GeoJSON inválido: {e}")
+    if geom.is_empty or geom.area == 0:
+        raise HTTPException(422, "El polígono está vacío.")
+    if not geom.is_valid:
+        geom = shapely.make_valid(geom)
+
+    full = dataset()["precipitation"]
+    ii, jj, frac = polygon_weights(geom, full.lat.values, full.lon.values)
+    if len(ii) == 0:
+        raise HTTPException(404, "El polígono está fuera del área de datos (México).")
+
+    # Recorte al rectángulo de celdas tocadas + pesos = fracción × cos(lat)
+    i0, i1, j0, j1 = ii.min(), ii.max() + 1, jj.min(), jj.max() + 1
+    da = _slice(full.isel(lat=slice(i0, i1), lon=slice(j0, j1)), req.start, req.end)
+    coslat = np.cos(np.deg2rad(da.lat.values))
+    wgrid = np.zeros((i1 - i0, j1 - j0))
+    wgrid[ii - i0, jj - j0] = frac * coslat[ii - i0]
+    weights = xr.DataArray(wgrid, coords={"lat": da.lat, "lon": da.lon}, dims=("lat", "lon"))
+
+    has_data = da.notnull().any("time").load()
+    w_valid = float((weights * has_data).sum())
+    if w_valid == 0:
+        raise HTTPException(404, "El área no tiene datos (¿está sobre el mar o fuera de México?).")
+    mean = da.weighted(weights).mean(("lat", "lon")).load()
+    area_km2 = w_valid * (grid_res(full.lat.values) * KM_PER_DEG) ** 2
+    n_cells = int(((weights > 0) & has_data).sum())
+
+    payload = _series_payload(_resample(mean, req.freq), req.freq,
+                              label=req.name or "Área seleccionada", n_cells=n_cells,
+                              area_km2=round(area_km2, 1))
+    total = payload["stats"]["total_mm"]
+    payload["stats"]["volume_hm3"] = round(total * area_km2 / 1000, 1)   # mm·km² = 1,000 m³
+    return payload
+
+
+@app.get("/api/timeseries/entity/{cvegeo}")
+def entity_series(cvegeo: str, start: str | None = None, end: str | None = None, freq: Freq = "D"):
+    """Serie precalculada de un estado (CVE_ENT, p. ej. '20'), municipio (CVEGEO, p. ej. '20067')
+    o de México completo ('00'). Promedio ponderado por fracción de celda."""
+    zs = zonal_dataset()
+    if cvegeo not in zs.region.values:
+        raise HTTPException(404, f"Clave {cvegeo!r} no encontrada.")
+    r = zs.sel(region=cvegeo)
+    da = _slice(r["precipitation"], start, end)
+    area = float(r.area_km2)
+    nivel = str(r.nivel.values)
+    nombre = str(r.nombre.values)
+    if nivel == "municipio":
+        ent = str(zs.sel(region=str(r.cve_ent.values)).nombre.values)
+        label = f"{nombre}, {ent}"
+    else:
+        label = nombre
+    payload = _series_payload(_resample(da, freq), freq, label=label, cvegeo=cvegeo, nivel=nivel,
+                              area_km2=round(area, 1))
+    payload["stats"]["volume_hm3"] = round(payload["stats"]["total_mm"] * area / 1000, 1)
+    return payload
 
 
 @app.get("/api/map")
