@@ -7,6 +7,7 @@ h5py>=3.11
 dask[array]>=2024.6
 numpy>=1.26
 scipy>=1.13
+pymannkendall>=1.4.3
 pandas>=2.2
 regionmask>=0.12
 geopandas>=1.0

@@ -60,6 +60,23 @@ def zonal_dataset() -> xr.Dataset:
     return _open_zonal(_signature([config.ZONAL_SERIES]))
 
 
+@lru_cache(maxsize=1)
+def _valid_cells(sig: tuple) -> np.ndarray:
+    return dataset()["precipitation"].isel(time=slice(0, 31)).notnull().any("time").values
+
+
+def _nearest_cell(lat: float, lon: float, max_km: float = 30) -> tuple[int, int]:
+    """Índices de la celda CON DATO más cercana; 404 si no hay ninguna a menos de `max_km`."""
+    pr = dataset()["precipitation"]
+    valid = _valid_cells(_signature(sorted(config.PROCESSED_DIR.glob("imerg_mexico_daily_*.nc"))))
+    LA, LO = np.meshgrid(pr.lat.values, pr.lon.values, indexing="ij")
+    d2 = np.where(valid, (LA - lat) ** 2 + ((LO - lon) * np.cos(np.deg2rad(lat))) ** 2, np.inf)
+    i, j = np.unravel_index(np.argmin(d2), d2.shape)
+    if np.sqrt(d2[i, j]) * KM_PER_DEG > max_km:
+        raise HTTPException(404, "Punto fuera de México o sin datos.")
+    return int(i), int(j)
+
+
 def _slice(da: xr.DataArray, start: str | None, end: str | None) -> xr.DataArray:
     return da.sel(time=slice(start, end))
 
@@ -128,9 +145,9 @@ def point_series(
     end: str | None = None,
     freq: Freq = "D",
 ):
-    """Serie en la celda IMERG (0.1°) más cercana al punto."""
-    da = dataset()["precipitation"].sel(lat=lat, lon=lon, method="nearest")
-    da = _slice(da, start, end).load()
+    """Serie en la celda IMERG (0.1°) con dato más cercana al punto (en la costa la exacta puede ser mar)."""
+    i, j = _nearest_cell(lat, lon)
+    da = _slice(dataset()["precipitation"].isel(lat=i, lon=j), start, end).load()
     if da.isnull().all():
         raise HTTPException(404, "Punto fuera de México o sin datos.")
     return _series_payload(
@@ -249,6 +266,106 @@ def precip_map(start: str, end: str | None = None, step: int = Query(2, ge=1, le
     z = np.where(np.isnan(acc.values), None, np.round(acc.values, 1))
     return {"lat": acc.lat.values.round(3).tolist(), "lon": acc.lon.values.round(3).tolist(),
             "z": z.tolist(), "start": start, "end": end or start}
+
+
+# ---------------------------------------------------------------------------
+# Medidas para análisis autoguiado (measures.py)
+# ---------------------------------------------------------------------------
+import json  # noqa: E402
+
+import measures  # noqa: E402
+from analysis import _json_default  # noqa: E402
+
+
+def _daily_for_place(place: dict) -> tuple[pd.Series, str]:
+    """Serie diaria (mm/día) para un lugar, con el calendario completo (días faltantes = NaN)."""
+    if "cve" in place:
+        zs = zonal_dataset()
+        if place["cve"] not in zs.region.values:
+            raise HTTPException(404, f"Clave {place['cve']!r} no encontrada.")
+        r = zs.sel(region=place["cve"])
+        s, label = r["precipitation"].to_series(), str(r.nombre.values)
+    elif "point" in place:
+        i, j = _nearest_cell(*place["point"])
+        da = dataset()["precipitation"].isel(lat=i, lon=j).load()
+        s, label = da.to_series(), f"Celda ({float(da.lat):.2f}, {float(da.lon):.2f})"
+    elif "geometry" in place:
+        geom = _to_geometry(place["geometry"])
+        full = dataset()["precipitation"]
+        ii, jj, frac = polygon_weights(geom, full.lat.values, full.lon.values)
+        if len(ii) == 0:
+            raise HTTPException(404, "El polígono está fuera del área de datos (México).")
+        i0, i1, j0, j1 = ii.min(), ii.max() + 1, jj.min(), jj.max() + 1
+        da = full.isel(lat=slice(i0, i1), lon=slice(j0, j1))
+        wgrid = np.zeros((i1 - i0, j1 - j0))
+        wgrid[ii - i0, jj - j0] = frac * np.cos(np.deg2rad(da.lat.values))[ii - i0]
+        w = xr.DataArray(wgrid, coords={"lat": da.lat, "lon": da.lon}, dims=("lat", "lon"))
+        s, label = da.weighted(w).mean(("lat", "lon")).load().to_series(), place.get("name") or "Área"
+    else:
+        raise HTTPException(422, "Lugar inválido: usa cve, point o geometry.")
+    s = s.astype("float64")
+    return s.reindex(pd.date_range(s.index.min(), s.index.max(), freq="D")), label
+
+
+measures.set_daily_source(_daily_for_place)
+
+
+class MeasureRequest(BaseModel):
+    measure: str
+    place: dict[str, Any]
+    months: list[int] = list(range(1, 13))
+    period: list[int] | None = None          # [año_inicio, año_fin]
+    baseline: list[int] | None = None
+    threshold: float = 1.0                   # wet_days
+    dias: int = 7                            # dry_spell
+    scale: int = 3                           # drought
+    a: list[int] | None = None               # compare_periods
+    b: list[int] | None = None
+    place2: dict[str, Any] | None = None     # compare_places
+
+
+@app.get("/api/measures")
+def list_measures():
+    """Catálogo de medidas con su disponibilidad según los datos descargados."""
+    out = []
+    for m in measures.CATALOG.values():
+        ok, why = measures.available(m)
+        out.append({**measures.asdict(m), "disponible": ok, "motivo": why})
+    return out
+
+
+@app.post("/api/measure")
+def run_measure(req: MeasureRequest):
+    m = measures.CATALOG.get(req.measure)
+    if not m:
+        raise HTTPException(404, f"Medida {req.measure!r} no existe.")
+    ok, why = measures.available(m)
+    if not ok:
+        raise HTTPException(503, why)
+    if not req.months or any(not 1 <= x <= 12 for x in req.months):
+        raise HTTPException(422, "Meses inválidos (1–12).")
+    params = req.model_dump(exclude={"measure", "place"}, exclude_none=True)
+    for k in ("period", "baseline", "a", "b"):
+        if k in params:
+            params[k] = tuple(params[k])
+    try:
+        res = measures.compute(req.measure, req.place, **params)
+    except HTTPException:
+        raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(422, str(e))
+    return _clean(json.loads(json.dumps(res, default=_json_default)))
+
+
+def _clean(o):
+    """NaN/inf -> null (JSON estricto) y claves numéricas (años) como texto."""
+    if isinstance(o, dict):
+        return {str(k): _clean(v) for k, v in o.items()}
+    if isinstance(o, list):
+        return [_clean(v) for v in o]
+    if isinstance(o, float) and not np.isfinite(o):
+        return None
+    return o
 
 
 @app.get("/", include_in_schema=False)

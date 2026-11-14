@@ -70,6 +70,23 @@
   .stat small { display:block; font-size:12px; font-variant-numeric:tabular-nums; }
   .stat small.up { color:var(--up); } .stat small.down { color:var(--down); }
   .err { color:#c92a2a; font-size:14px; }
+  /* Medidas */
+  .panel > .measures { grid-column:1 / -1; }
+  .mchips { display:flex; flex-wrap:wrap; gap:4px; }
+  .mchip { font-size:12px; padding:3px 7px; border-radius:999px; }
+  .mchip.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  #panel-B .mchip.on { background:var(--series-b); border-color:var(--series-b); }
+  .badge { font-size:12px; font-weight:600; padding:2px 8px; border-radius:999px; color:#fff; }
+  .badge.alta { background:#2b8a3e; } .badge.media { background:#e67700; }
+  .badge.baja { background:#868e96; } .badge.no-disponible { background:#c92a2a; }
+  .mres h3 { margin:6px 0; font-size:15px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .mres .note { font-size:13px; color:var(--muted); margin:6px 0; line-height:1.45; }
+  .mres .warn { font-size:13px; margin:6px 0; padding:6px 8px; border-radius:6px; border:1px solid var(--border); }
+  .mres table { border-collapse:collapse; font-size:13px; margin-top:8px; font-variant-numeric:tabular-nums; }
+  .mres th, .mres td { padding:3px 10px 3px 0; text-align:right; border-bottom:1px solid var(--border); }
+  .mres th:first-child, .mres td:first-child { text-align:left; }
+  .mres details { font-size:13px; color:var(--muted); margin-top:8px; }
+  .param { display:none; } .param.show { display:flex; }
   /* Leyenda y lectura del mapa */
   .legend, .readout { background:var(--card); color:var(--text); padding:6px 10px; border-radius:6px;
     border:1px solid var(--border); font-size:12px; line-height:1.4; }
@@ -116,6 +133,7 @@ function colorFor(t) {                 // t en [0, 1]
 const ATTR_INEGI = 'Límites: INEGI, Marco Geoestadístico 2026';
 const MEXICO_BOUNDS = [[14.4, -118.5], [32.8, -86.6]];
 const SERIES_COLOR = { A: '--series', B: '--series-b' };
+const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
 async function getJSON(url, opts) {
   const r = await fetch(url, opts);
@@ -186,6 +204,34 @@ function panelHTML(k) {
       <div class="ts" data-f="ts"></div>
       <div class="stats" data-f="stats"></div>
     </section>
+
+    <section class="card measures">
+      <div class="sel"><span class="tag">${k}</span><b>Medidas</b>
+        <span class="chip">sobre la selección actual</span></div>
+      <div class="controls">
+        <label>Medida <select data-f="mSel"></select></label>
+        <label>Meses
+          <select data-f="mPreset">
+            <option value="1,2,3,4,5,6,7,8,9,10,11,12">Año completo</option>
+            <option value="6,7,8,9">Lluvias (jun–sep)</option>
+            <option value="11,12,1,2,3,4">Secas (nov–abr)</option>
+            <option value="12,1,2">Invierno (dic–feb)</option>
+            <option value="custom">Personalizado</option>
+          </select></label>
+        <label>Años desde <input type="number" data-f="mY0" style="width:80px"></label>
+        <label>hasta <input type="number" data-f="mY1" style="width:80px"></label>
+        <label class="param" data-param="threshold">Umbral
+          <select data-f="mThr"><option value="1">≥ 1 mm (lluvia)</option><option value="10">≥ 10 mm (fuerte)</option>
+            <option value="20">≥ 20 mm (muy fuerte)</option></select></label>
+        <label class="param" data-param="dias">Días seguidos <input type="number" data-f="mDias" value="7" min="2" max="60" style="width:70px"></label>
+        <label class="param" data-param="scale">Escala SPI
+          <select data-f="mScale"><option value="1">1 mes</option><option value="3" selected>3 meses</option>
+            <option value="6">6 meses</option><option value="12">12 meses</option></select></label>
+        <button class="primary" data-act="measure">Medir</button>
+      </div>
+      <div class="mchips" data-f="mChips"></div>
+      <div class="mres" data-f="mRes"><p class="hint">Elige una medida y presiona <b>Medir</b>. Se recalcula sola al cambiar la selección.</p></div>
+    </section>
   </div>`;
 }
 
@@ -195,7 +241,8 @@ async function createPanel(k) {
   const root = $(`panel-${k}`);
   const el = name => root.querySelector(`[data-f="${name}"]`);
   const p = {
-    k, el, selection: null, mapData: null, series: null, seriesReq: 0, mapReq: 0,
+    k, el, selection: null, mapData: null, series: null, seriesReq: 0, mapReq: 0, measureReq: 0,
+    measure: null, measureActive: false, months: [],
     areaLayer: null, pointMarker: null, grid: null, rasterLayer: null, statesLayer: null,
     muniLayer: null, highlight: null,
   };
@@ -205,6 +252,8 @@ async function createPanel(k) {
     if (act === 'map') loadMap(p);
     else if (act === 'ts') loadSeries(p);
     else if (act === 'mexico') selectMexico(p);
+    else if (act === 'measure') runMeasure(p);
+    else if (ev.target.dataset?.month) toggleMonth(p, +ev.target.dataset.month);
   });
 
   // Fechas
@@ -214,6 +263,7 @@ async function createPanel(k) {
   el('mapStart').value = `${y}-01-01` < info.start ? info.start : `${y}-01-01`;
   el('mapEnd').value = info.end;
   el('freq').onchange = () => loadSeries(p);
+  const measuresReady = initMeasures(p);
 
   // Mapa — zoomSnap 1 (zoom entero): evita costuras blancas entre teselas del mapa base
   const map = p.map = L.map(el('map'), { zoomSnap: 1 }).fitBounds(MEXICO_BOUNDS);
@@ -283,6 +333,7 @@ async function createPanel(k) {
   }
   el('qEnt').onchange = e => { fillMunMenu(p, e.target.value); if (e.target.value) selectEntity(p, e.target.value); };
   el('qMun').onchange = e => selectEntity(p, e.target.value || el('qEnt').value);
+  await measuresReady;
   return p;
 }
 
@@ -486,6 +537,7 @@ async function loadSeries(p) {
     Plotly.purge(p.el('ts'));
   }
   renderSeries();
+  if (p.measureActive) runMeasure(p);
 }
 
 // Con escala compartida, ambas series usan el mismo eje Y (solo si tienen la misma agregación/unidades)
@@ -582,10 +634,165 @@ function renderStats(p) {
     `<div class="stat"><span>${k}</span><b>${v}</b>${key ? delta(p, key) : ''}</div>`).join('');
 }
 
+// ---------------- Medidas (measures.py vía /api/measure) ----------------
+const measuresP = getJSON('/api/measures').catch(() => []);
+const UI_MEASURES = ['wet_days', 'dry_spell', 'intensity', 'total', 'pct_normal', 'drought', 'yoy', 'mom', 'trend'];
+const PARAMS = { wet_days: ['threshold'], dry_spell: ['dias'], drought: ['scale'] };
+const NO_MONTHS = ['drought', 'mom'];   // usan la serie mensual completa
+// Cifras principales por medida: [ruta, etiqueta (admite {campo}), unidad, ruta del IC]
+const MAIN = {
+  wet_days: [['prob_pct', 'Prob. de día con lluvia ≥ {umbral_mm} mm', '%', 'ic95_pct'], ['dias_esperados_por_mes', 'Días con lluvia por mes', 'días']],
+  dry_spell: [['prob_ventana_seca_pct', 'Prob. de {dias} días seguidos sin lluvia', '%'], ['racha_mediana', 'Racha seca más larga (mediana anual)', 'días']],
+  intensity: [['mediana.SDII_mm', 'Intensidad (por día con lluvia)', 'mm'], ['mediana.Rx1day_mm', 'Máximo en 1 día', 'mm'],
+              ['mediana.Rx5day_mm', 'Máximo en 5 días', 'mm'], ['mediana.dias_fuertes', 'Días ≥ 10 mm', 'días/año']],
+  total: [['media_mm', 'Lluvia media', 'mm', 'ic95_media_mm'], ['mediana_mm', 'Mediana', 'mm'], ['error_aleatorio_imerg_mm', 'Error IMERG (cota)', 'mm']],
+  pct_normal: [['normal_mm', 'Normal (mediana de referencia)', 'mm']],
+  drought: [['prob_sequia_pct', 'Meses en sequía (SPI ≤ −1)', '%', 'ic95_pct'], ['esperado_pct', 'Esperado en clima normal', '%'],
+            ['racha_sequia_mas_larga_meses', 'Racha de sequía más larga', 'meses'], ['ultimo_mes.SPI', 'SPI del último mes', '']],
+  yoy: [], mom: [],
+  trend: [['sen_pct_por_decada', 'Tendencia (Sen)', '%/década'], ['sen_mm_por_decada', 'Tendencia', 'mm/década'],
+          ['p_hamed_rao', 'p (Hamed-Rao)', ''], ['tendencia_minima_detectable_pct_decada', 'Mínima detectable', '%/década']],
+};
+const COL_LABEL = { total_mm: 'Total (mm)', pct_normal: '% normal', percentil_ref: 'Percentil', clase: 'Clase',
+  mas_seco_desde: 'Más seco desde', mas_humedo_desde: 'Más húmedo desde', anterior_mm: 'Año previo (mm)',
+  cambio_pct: 'Cambio %', percentil_vs_cambios_normales: 'Percentil', inusual: '¿Inusual?', mm: 'mm',
+  cambio_normal_pct: 'Cambio normal %', exceso_vs_normal_pct: 'Exceso vs normal %', percentil: 'Percentil',
+  SDII_mm: 'SDII (mm)', Rx1day_mm: 'Rx1day (mm)', Rx5day_mm: 'Rx5day (mm)', dias_fuertes: 'Días ≥ 10 mm', valor: 'Valor' };
+const get = (o, path) => path.split('.').reduce((v, k) => v?.[k], o);
+
+async function initMeasures(p) {
+  const cat = await measuresP;
+  p.catalog = Object.fromEntries(cat.map(m => [m.id, m]));
+  const opt = id => { const m = p.catalog[id]; if (!m) return '';
+    return `<option value="${id}" ${m.disponible ? '' : 'disabled'}>${m.nombre}${m.disponible ? '' : ' (faltan datos)'}</option>`; };
+  p.el('mSel').innerHTML =
+    `<optgroup label="Escala diaria (2020 →)">${UI_MEASURES.filter(id => p.catalog[id]?.datos === 'diario').map(opt).join('')}</optgroup>
+     <optgroup label="Escala mensual (1998 →)">${UI_MEASURES.filter(id => p.catalog[id]?.datos === 'mensual').map(opt).join('')}</optgroup>`;
+  p.el('mY0').value = info.start.slice(0, 4); p.el('mY1').value = info.end.slice(0, 4);
+  p.months = [...Array(12).keys()].map(i => i + 1);
+  p.el('mPreset').onchange = e => { if (e.target.value !== 'custom') { p.months = e.target.value.split(',').map(Number); renderChips(p); } };
+  p.el('mSel').onchange = () => showParams(p);
+  renderChips(p); showParams(p);
+}
+
+function showParams(p) {
+  const id = p.el('mSel').value;
+  p.el('mSel').closest('.card').querySelectorAll('.param').forEach(l =>
+    l.classList.toggle('show', (PARAMS[id] || []).includes(l.dataset.param)));
+  const noMonths = NO_MONTHS.includes(id);
+  p.el('mPreset').disabled = noMonths; p.el('mChips').style.opacity = noMonths ? 0.4 : 1;
+}
+
+function renderChips(p) {
+  p.el('mChips').innerHTML = MONTHS.map((m, i) =>
+    `<button class="mchip ${p.months.includes(i + 1) ? 'on' : ''}" data-month="${i + 1}">${m}</button>`).join('');
+}
+
+function toggleMonth(p, m) {
+  const set = new Set(p.months);
+  set.has(m) ? set.delete(m) : set.add(m);
+  if (!set.size) return;
+  p.months = orderMonths([...set]);
+  const preset = [...p.el('mPreset').options].find(o => o.value === p.months.join(','));
+  p.el('mPreset').value = preset ? preset.value : 'custom';
+  renderChips(p);
+}
+
+// Temporadas que cruzan el año (nov–abr) empiezan después del hueco más grande
+function orderMonths(ms) {
+  ms.sort((a, b) => a - b);
+  if (ms.length === 12) return ms;
+  let gap = -1, start = 0;
+  ms.forEach((m, i) => { const next = ms[(i + 1) % ms.length] + (i + 1 === ms.length ? 12 : 0);
+    if (next - m > gap) { gap = next - m; start = (i + 1) % ms.length; } });
+  return [...ms.slice(start), ...ms.slice(0, start)];
+}
+
+function placeOf(p) {
+  const s = p.selection;
+  if (!s) return null;
+  if (s.type === 'point') return { point: [s.lat, s.lon] };
+  if (s.type === 'area') return { geometry: s.geometry, name: s.name };
+  return { cve: s.cve };
+}
+
+async function runMeasure(p) {
+  const place = placeOf(p), id = p.el('mSel').value;
+  if (!place || !id) return;
+  p.measureActive = true;
+  const req = ++p.measureReq;
+  const y0 = +p.el('mY0').value, y1 = +p.el('mY1').value;
+  const body = { measure: id, place, months: p.months, period: [Math.min(y0, y1), Math.max(y0, y1)],
+    threshold: +p.el('mThr').value, dias: +p.el('mDias').value, scale: +p.el('mScale').value };
+  p.el('mRes').innerHTML = '<p class="hint">Calculando…</p>';
+  try {
+    const r = await getJSON('/api/measure', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (req !== p.measureReq) return;
+    p.measure = { id, r };
+  } catch (e) {
+    if (req !== p.measureReq) return;
+    p.measure = null;
+    p.el('mRes').innerHTML = `<p class="err">${e.message}</p>`;
+    return;
+  }
+  renderMeasures();
+}
+
+function renderMeasures() { for (const p of visible()) if (p.measure) renderMeasure(p); }
+
+function renderMeasure(p) {
+  const { id, r } = p.measure;
+  const conf = r.confianza;
+  const fill = t => t.replace(/\{(\w+)\}/g, (_, k) => r[k] ?? '');
+  const A = panels.A?.measure;
+  const cmp = p.k === 'B' && isCompare() && A?.id === id ? A.r : null;
+  const tiles = (MAIN[id] || []).map(([path, label, unit, ciPath]) => {
+    const v = get(r, path);
+    if (v == null) return '';
+    const ci = ciPath ? get(r, ciPath) : null;
+    let extra = ci && ci[0] != null ? `<small style="color:var(--muted)">IC95 ${fmt(ci[0])}–${fmt(ci[1])}</small>` : '';
+    const va = cmp ? get(cmp, path) : null;
+    if (typeof v === 'number' && typeof va === 'number') {
+      const d = v - va;
+      extra += `<small class="${d >= 0 ? 'up' : 'down'}">${d >= 0 ? '+' : ''}${fmt(d)} ${unit === '%' ? 'pp' : unit} vs A</small>`;
+    }
+    const val = typeof v === 'number' ? (path.startsWith('p_') && v < 0.001 ? '< 0.001' : fmt(v, Math.abs(v) < 1 && v !== 0 ? 3 : 1)) : v;
+    return `<div class="stat"><span>${fill(label)}</span><b>${val} ${unit}</b>${extra}</div>`;
+  }).join('');
+  // Tabla por año / mes (cualquier medida)
+  const tableData = r.por_anio || r.por_mes || r.racha_seca_mas_larga_por_anio;
+  let table = '';
+  if (tableData && Object.keys(tableData).length) {
+    const rows = Object.entries(tableData).map(([k, v]) => [k, typeof v === 'object' ? v : { valor: v }]);
+    const cols = [...new Set(rows.flatMap(([, v]) => Object.keys(v)))];
+    const cell = (v, c) => v == null ? '—' : typeof v === 'boolean' ? (v ? 'sí' : 'no')
+      : typeof v === 'number' ? (c.endsWith('_desde') ? String(v) : fmt(v, Number.isInteger(v) ? 0 : 1)) : v;
+    const label = c => c === 'valor' && id === 'dry_spell' ? 'Racha seca más larga (días)' : COL_LABEL[c] || c;
+    table = `<table><thead><tr><th>${r.por_mes ? 'Mes' : 'Año'}</th>${cols.map(c => `<th>${label(c)}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map(([k, v]) => `<tr><td>${k}</td>${cols.map(c => `<td>${cell(v[c], c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  }
+  const sig = r.significativo == null ? '' :
+    `<span class="chip">${r.significativo ? 'estadísticamente significativo' : 'no significativo'} (α = 0.05)</span>`;
+  p.el('mRes').innerHTML = `
+    <h3>${r.medida} · ${r.lugar} <span class="chip">${r.meses ?? ''}</span>
+      <span class="badge ${conf.replace(' ', '-')}" title="${r.nota_confianza}">confianza ${conf}</span> ${sig}</h3>
+    <p class="note">${r.nota_confianza} Años con datos completos: <b>${r.n_anios}</b>.
+      ${r.ic_incluye_variabilidad_interanual === false ? 'El IC sólo refleja variación dentro de los años observados (no entre años): es optimista.' : ''}</p>
+    ${tiles ? `<div class="stats">${tiles}</div>` : ''}
+    ${r.lectura ? `<p class="warn">${r.lectura}</p>` : ''}
+    ${r.advertencia ? `<p class="warn">⚠ ${r.advertencia}</p>` : ''}
+    ${r.resolucion?.aviso ? `<p class="warn">⚠ Resolución: ${r.resolucion.aviso}</p>` : ''}
+    ${table}
+    <details><summary>Método</summary><p>${r.metodo}</p></details>`;
+}
+
 // ---------------- Comparación ----------------
 async function copyAtoB() {
   const A = panels.A, B = panels.B;
-  for (const f of ['mapStart', 'mapEnd', 'freq', 'start', 'end']) B.el(f).value = A.el(f).value;
+  for (const f of ['mapStart', 'mapEnd', 'freq', 'start', 'end', 'mSel', 'mPreset', 'mY0', 'mY1', 'mThr', 'mDias', 'mScale'])
+    B.el(f).value = A.el(f).value;
+  B.months = [...A.months]; renderChips(B); showParams(B);
+  B.measureActive = A.measureActive;
   loadMap(B);
   const s = A.selection;
   if (!s) return;
@@ -617,7 +824,7 @@ async function setCompare(on) {
   requestAnimationFrame(() => {
     for (const p of visible()) p.map.invalidateSize();
     if (on) syncMaps(panels.A);
-    renderRasters(); renderSeries();
+    renderRasters(); renderSeries(); renderMeasures();
     window.dispatchEvent(new Event('resize'));
   });
 }
