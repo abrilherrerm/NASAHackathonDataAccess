@@ -81,12 +81,31 @@ def _slice(da: xr.DataArray, start: str | None, end: str | None) -> xr.DataArray
     return da.sel(time=slice(start, end))
 
 
+def _late_only_msg(fe: str) -> str:
+    return (f"No hay datos IMERG Final después del {fe}. Las fechas posteriores sólo tienen datos "
+            "preliminares (IMERG Late), que se muestran en los mapas pero no entran a series ni estadística "
+            f"(sobreestiman ~18 % la lluvia; ANALISIS.md §9). Elige fechas hasta el {fe}.")
+
+
 def _slice_final(da: xr.DataArray, start: str | None, end: str | None) -> xr.DataArray:
     """Series y estadística: sólo IMERG Final. Los días preliminares (Late) quedan sólo para los mapas:
-    su sesgo en cantidades (+18 % regional, no corregible; ANALISIS.md §9) los hace poco confiables."""
+    su sesgo en cantidades (+18 % regional, no corregible; ANALISIS.md §9) los hace poco confiables.
+    Si todo el rango pedido es posterior al último día Final, responde 422 con la explicación."""
     from analysis import final_end
     fe = str(final_end().date())
+    if start and start[:10] > fe:
+        raise HTTPException(422, _late_only_msg(fe))
     return _slice(da, start, min(end, fe) if end else fe)
+
+
+def _aviso_final(end: str | None) -> str | None:
+    """Aviso cuando el usuario pidió un fin posterior al último día Final y la serie se recortó."""
+    from analysis import final_end
+    fe = str(final_end().date())
+    if end and end[:10] > fe:
+        return (f"La serie llega hasta el {fe} (último día IMERG Final). Lo posterior es preliminar "
+                "(IMERG Late) y sólo se muestra en los mapas.")
+    return None
 
 
 def late_start() -> pd.Timestamp | None:
@@ -165,7 +184,7 @@ def point_series(
     return _series_payload(
         _resample(da, freq), freq,
         lat=round(float(da.lat), 3), lon=round(float(da.lon), 3),
-        label=f"Punto ({float(da.lat):.2f}, {float(da.lon):.2f})",
+        label=f"Punto ({float(da.lat):.2f}, {float(da.lon):.2f})", aviso=_aviso_final(end),
     )
 
 
@@ -182,7 +201,7 @@ def region_series(
         raise HTTPException(404, "Región vacía.")
     w = np.cos(np.deg2rad(da.lat))
     mean = da.weighted(w).mean(("lat", "lon")).load()
-    return _series_payload(_resample(mean, freq), freq, label="Promedio regional",
+    return _series_payload(_resample(mean, freq), freq, label="Promedio regional", aviso=_aviso_final(end),
                            bbox={"west": west, "south": south, "east": east, "north": north})
 
 
@@ -237,7 +256,7 @@ def polygon_series(req: PolygonRequest):
     n_cells = int(((weights > 0) & has_data).sum())
 
     payload = _series_payload(_resample(mean, req.freq), req.freq,
-                              label=req.name or "Área seleccionada", n_cells=n_cells,
+                              label=req.name or "Área seleccionada", n_cells=n_cells, aviso=_aviso_final(req.end),
                               area_km2=round(area_km2, 1))
     total = payload["stats"]["total_mm"]
     payload["stats"]["volume_hm3"] = round(total * area_km2 / 1000, 1)   # mm·km² = 1,000 m³
@@ -262,7 +281,7 @@ def entity_series(cvegeo: str, start: str | None = None, end: str | None = None,
     else:
         label = nombre
     payload = _series_payload(_resample(da, freq), freq, label=label, cvegeo=cvegeo, nivel=nivel,
-                              area_km2=round(area, 1))
+                              area_km2=round(area, 1), aviso=_aviso_final(end))
     payload["stats"]["volume_hm3"] = round(payload["stats"]["total_mm"] * area / 1000, 1)
     return payload
 
@@ -337,15 +356,48 @@ class MeasureRequest(BaseModel):
     place2: dict[str, Any] | None = None     # compare_places
 
 
-@app.get("/api/measures")
-def list_measures():
-    """Catálogo de medidas con su disponibilidad según los datos descargados."""
+def _years_available() -> tuple[dict, dict]:
+    """Años (y último dato) disponibles para estadística por escala; sólo IMERG Final."""
     from analysis import final_end
     t = dataset().time.values
-    years = {"diario": [int(pd.Timestamp(t[0]).year), int(final_end().year)]}   # estadística: sólo Final
+    fe = final_end()
+    years = {"diario": [int(pd.Timestamp(t[0]).year), int(fe.year)]}
+    last = {"diario": str(fe.date())}
     if config.MONTHLY_FILE.exists():
         tm = measures._monthly_grid().time.to_index()
         years["mensual"] = [int(tm[0].year), int(tm[-1].year)]
+        last["mensual"] = tm[-1].strftime("%Y-%m")
+    return years, last
+
+
+def _check_years(m, params: dict) -> None:
+    """Rechaza años fuera de lo disponible con un mensaje claro (en vez de un resultado vacío)."""
+    years, last = _years_available()
+    if m.datos not in years:
+        return
+    y0, y1 = years[m.datos]
+    escala = "diarios" if m.datos == "diario" else "mensuales"
+    for k, nombre in (("period", "Periodo"), ("baseline", "Periodo de referencia"),
+                      ("a", "Periodo A"), ("b", "Periodo B")):
+        v = params.get(k)
+        if not v:
+            continue
+        if len(v) != 2 or v[0] > v[1]:
+            raise HTTPException(422, f"{nombre} inválido: usa [año_inicio, año_fin].")
+        if v[1] > y1:
+            raise HTTPException(422, (
+                f"{nombre} {v[0]}–{v[1]}: los datos {escala} IMERG Final llegan hasta {last[m.datos]}. "
+                f"Después sólo hay datos preliminares (IMERG Late), que se muestran en los mapas pero no "
+                f"entran a la estadística (sobreestiman ~18 % la lluvia). "
+                f"Usa años hasta {y1}."))
+        if v[0] < y0:
+            raise HTTPException(422, f"{nombre} {v[0]}–{v[1]}: los datos {escala} empiezan en {y0}.")
+
+
+@app.get("/api/measures")
+def list_measures():
+    """Catálogo de medidas con su disponibilidad según los datos descargados."""
+    years, _ = _years_available()
     out = []
     for m in measures.CATALOG.values():
         ok, why = measures.available(m)
@@ -367,6 +419,7 @@ def run_measure(req: MeasureRequest):
     for k in ("period", "baseline", "a", "b"):
         if k in params:
             params[k] = tuple(params[k])
+    _check_years(m, params)
     try:
         res = measures.compute(req.measure, req.place, **params)
     except HTTPException:
