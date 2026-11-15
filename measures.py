@@ -456,19 +456,16 @@ def m_compare_places(place, place2=None, months=range(1, 13), period=None, **_):
 # ---------------------------------------------------------------------------
 # Medidas diarias
 # ---------------------------------------------------------------------------
-# Temporadas oficiales (SMN): lluvias 15 may–15 nov y su complemento exacto, sin traslape.
-# Con datos mensuales no se puede cortar a medio mes: se usa la partición mensual más cercana
-# (may–nov / dic–abr), también sin traslape, y se avisa cuánto difiere.
+# Temporadas por escala (complementarias y sin traslape en cada una):
+#   diario  -> corte oficial exacto: lluvias 15 may–15 nov / secas 16 nov–14 may
+#   mensual -> meses completos:      lluvias may–nov      / secas dic–abr
+# Con meses completos, lluvias incluye las colas 1–14 may y 16–30 nov (~5 % más lluvia que el oficial)
+# y secas las excluye; es la contrapartida aceptada de usar el registro mensual largo (ANALISIS.md §8).
 SEASONS = {
-    "lluvias": {"nombre": "Temporada de lluvias (15 may–15 nov)", "mensual": [5, 6, 7, 8, 9, 10, 11],
-                "nota_mensual": "Datos mensuales: se usa may–nov completo, que suma más lluvia que el corte exacto "
-                                "15 may–15 nov (mediana +5 %, de +1 a +11 % según el estado). No afecta anomalías "
-                                "ni tendencias porque el sesgo es casi constante entre años."},
-    "secas": {"nombre": "Temporada seca (16 nov–14 may)", "mensual": [12, 1, 2, 3, 4],
-              "nota_mensual": "Datos mensuales: se usa dic–abr completo, que deja fuera 16–30 nov y 1–14 may. "
-                              "Esos días de transición concentran mucha de la poca lluvia de secas: el total sale "
-                              "~34 % menor (de 6 a 57 % según el estado). Para totales de secas usa medidas diarias; "
-                              "anomalías y tendencias siguen siendo comparables entre años."},
+    "lluvias": {"diario": "Temporada de lluvias (15 may–15 nov)", "mensual": "Temporada de lluvias (may–nov)",
+                "meses": [5, 6, 7, 8, 9, 10, 11]},
+    "secas": {"diario": "Temporada seca (16 nov–14 may)", "mensual": "Temporada seca (dic–abr)",
+              "meses": [12, 1, 2, 3, 4]},
 }
 
 
@@ -494,7 +491,7 @@ def _daily_window(place, months, period, season=None):
 
 
 def _window_label(months, season):
-    return SEASONS[season]["nombre"] if season else _mlabel(months)
+    return SEASONS[season]["diario"] if season else _mlabel(months)
 
 
 def m_wet_days(place, months=range(1, 13), period=None, threshold=WET_MM, season=None, **_):
@@ -576,7 +573,7 @@ def resolution_note(place: dict) -> dict | None:
 
 
 def compute(measure: str, place: dict, season: str | None = None, **params) -> dict:
-    """`season` = 'lluvias' | 'secas' (oficiales). Diario: corte exacto. Mensual: partición mensual más cercana."""
+    """`season` = 'lluvias' | 'secas'. Diario: corte oficial exacto. Mensual: meses completos."""
     m = CATALOG[measure]
     if season:
         if season not in SEASONS:
@@ -584,11 +581,10 @@ def compute(measure: str, place: dict, season: str | None = None, **params) -> d
         if m.datos == "diario":
             params["season"] = season
         else:
-            params["months"] = SEASONS[season]["mensual"]
+            params["months"] = SEASONS[season]["meses"]
     res = FUNCS[measure](place, **params)
-    if season and m.datos == "mensual" and measure not in ("drought", "mom"):
-        res["meses"] = SEASONS[season]["nombre"] + " · aprox. " + _mlabel(SEASONS[season]["mensual"])
-        res["nota_ventana"] = SEASONS[season]["nota_mensual"]
+    if season and m.datos == "mensual" and "meses" in res:
+        res["meses"] = SEASONS[season]["mensual"]
     note = resolution_note(place)
     if note:
         res["resolucion"] = note

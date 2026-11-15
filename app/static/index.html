@@ -690,13 +690,24 @@ function showParams(p) {
     l.classList.toggle('show', (PARAMS[id] || []).includes(l.dataset.param)));
   const noMonths = NO_MONTHS.includes(id);
   p.el('mPreset').disabled = noMonths; p.el('mChips').style.opacity = noMonths ? 0.4 : 1;
+  // La temporada se nombra con la ventana que de verdad usa la escala de la medida
+  const scale = scaleOf(p);
+  for (const [key, def] of Object.entries(SEASON_UI)) {
+    const o = p.el('mPreset').querySelector(`option[value="${key}"]`);
+    if (o) o.textContent = def.label[scale];
+  }
+  renderChips(p);
 }
 
 // Temporadas oficiales (corte exacto con datos diarios). `half`: mes que la temporada cubre a la mitad.
+// Diario: corte oficial exacto (mayo y noviembre a medias). Mensual: meses completos.
 const SEASON_UI = {
-  lluvias: { months: [5, 6, 7, 8, 9, 10, 11], half: { 5: 'start', 11: 'end' } },   // 15 may → 15 nov
-  secas: { months: [11, 12, 1, 2, 3, 4, 5], half: { 11: 'start', 5: 'end' } },     // 16 nov → 14 may
+  lluvias: { months: [5, 6, 7, 8, 9, 10, 11], half: { 5: 'start', 11: 'end' }, monthly: [5, 6, 7, 8, 9, 10, 11],
+             label: { diario: 'Temporada de lluvias (15 may–15 nov)', mensual: 'Temporada de lluvias (may–nov)' } },
+  secas: { months: [11, 12, 1, 2, 3, 4, 5], half: { 11: 'start', 5: 'end' }, monthly: [12, 1, 2, 3, 4],
+           label: { diario: 'Temporada seca (16 nov–14 may)', mensual: 'Temporada seca (dic–abr)' } },
 };
+const scaleOf = p => p.catalog?.[p.el('mSel').value]?.datos || 'diario';
 
 function applyPreset(p, value) {
   p.season = SEASON_UI[value] ? value : null;
@@ -706,15 +717,18 @@ function applyPreset(p, value) {
 }
 
 function renderChips(p) {
-  const half = p.season ? SEASON_UI[p.season].half : {};
+  const monthly = scaleOf(p) === 'mensual';
+  const half = p.season && !monthly ? SEASON_UI[p.season].half : {};
+  const shown = p.season ? (monthly ? SEASON_UI[p.season].monthly : SEASON_UI[p.season].months) : p.months;
   p.el('mChips').innerHTML = MONTHS.map((m, i) => {
-    const h = half[i + 1], on = p.months.includes(i + 1);
+    const h = half[i + 1], on = shown.includes(i + 1);
     const cls = h ? `half ${h === 'end' ? 'end' : ''}` : on ? 'on' : '';
     return `<button class="mchip ${cls}" data-month="${i + 1}" ${h ? `title="${h === 'start' ? 'desde el 15/16' : 'hasta el 14/15'}"` : ''}>${m}</button>`;
   }).join('');
 }
 
 function toggleMonth(p, m) {
+  if (p.season && scaleOf(p) === 'mensual') p.months = [...SEASON_UI[p.season].monthly];
   p.season = null;                                   // al editar meses deja de ser la temporada oficial
   const set = new Set(p.months);
   set.has(m) ? set.delete(m) : set.add(m);
@@ -811,7 +825,6 @@ function renderMeasure(p) {
     ${r.lectura ? `<p class="warn">${r.lectura}</p>` : ''}
     ${r.advertencia ? `<p class="warn">⚠ ${r.advertencia}</p>` : ''}
     ${r.resolucion?.aviso ? `<p class="warn">⚠ Resolución: ${r.resolucion.aviso}</p>` : ''}
-    ${r.nota_ventana ? `<p class="warn">ℹ ${r.nota_ventana}</p>` : ''}
     ${table}
     <details><summary>Método</summary><p>${r.metodo}</p></details>`;
 }

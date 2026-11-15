@@ -145,10 +145,15 @@ Decisiones de diseño:
 - **Ocultar p-valores con confianza baja** evita que alguien encuentre "significancia" en 3 años de datos.
 - Lugares: `{"cve": "09"}`, `{"point": [lat, lon]}` o `{"geometry": GeoJSON}` — los mismos que ya usa la app.
 
-## 8. Temporadas: binario oficial lluvias / secas
+## 8. Temporadas: binario lluvias / secas, una ventana natural por escala
 
-**Por defecto se usa la temporada oficial**: lluvias **15 may–15 nov** y secas **16 nov–14 may** (complemento
-exacto, sin traslape). Jun–sep queda como opción "núcleo lluvioso" sólo para comparar con la literatura del monzón.
+| Escala | Lluvias | Secas | Notas |
+|---|---|---|---|
+| **Diario** (2020→) | **15 may–15 nov** (oficial, exacto) | **16 nov–14 may** | corte al día |
+| **Mensual** (1998→) | **may–nov** | **dic–abr** | meses completos |
+
+En cada escala las dos temporadas son complementarias y **sin traslape**. Jun–sep queda como opción
+"núcleo lluvioso" sólo para comparar con la literatura del monzón.
 
 **Por qué no jun–sep** (diario 2021–2024, `data/analysis/ventana_temporada.csv`):
 
@@ -180,11 +185,13 @@ puede armarlos con los meses personalizados.
 **Excepciones regionales**: Baja California tiene régimen de lluvias de **invierno** (65 % del total en la
 temporada "seca" oficial); BCS reparte ~1/3 fuera de la oficial. Ahí "temporada de lluvias" no significa lo mismo.
 
-**Datos mensuales** no se pueden cortar a medio mes; se usa la partición más cercana sin traslape:
-- Lluvias → may–nov completo: **+5 %** de lluvia vs el corte exacto (de +1 a +11 % por estado). Sesgo casi constante:
-  no afecta anomalías ni tendencias.
-- Secas → dic–abr completo: **−34 %** (de −6 a −57 %): los días de transición (16–30 nov, 1–14 may) concentran mucha
-  de la poca lluvia de secas. Para **totales** de secas usar medidas diarias (corte exacto).
+**Contrapartida aceptada de los meses completos** (medida con el diario 2021–2024, 32 estados):
+- Lluvias may–nov incluye las colas 1–14 may y 16–30 nov: **+5 %** de lluvia vs el oficial (de +1 a +11 %).
+  Sesgo casi constante entre años: no afecta anomalías, % de lo normal, SPI ni tendencias.
+- Secas dic–abr excluye esas colas: **−34 %** (de −6 a −57 %), porque concentran mucha de la poca lluvia
+  de secas. Para **totales** de secas, preferir las medidas diarias.
+- Por eso los totales de una escala y otra **no se comparan directamente**: la app nombra cada temporada
+  con la ventana que usa ("15 may–15 nov" vs "may–nov").
 
 **Comparaciones** (modo A | B): las cantidades (mm, días) se comparan en **% relativo**; las probabilidades y
 porcentajes en **puntos porcentuales** (pp), porque un "% de un %" se malinterpreta fácilmente.
