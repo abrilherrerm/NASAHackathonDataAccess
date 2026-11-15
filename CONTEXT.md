@@ -4,7 +4,7 @@ Documento para quien se sume al proyecto (personas o asistentes de IA): qué hac
 está hecho así, cómo está organizado, qué problemas ya se resolvieron y qué sigue.
 El README explica *cómo correrlo*; este archivo explica *el porqué*.
 
-_Última actualización: 2026-11-14 (Final + Late, desde 2014-06; antes del análisis mensual)_
+_Última actualización: 2026-11-14 (Final + Late, desde 2014-06)_
 
 ---
 
