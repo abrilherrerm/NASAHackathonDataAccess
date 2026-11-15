@@ -314,6 +314,7 @@ class MeasureRequest(BaseModel):
     measure: str
     place: dict[str, Any]
     months: list[int] = list(range(1, 13))
+    season: str | None = None                # 'lluvias' (15 may–15 nov) | 'secas' (16 nov–14 may); sustituye a months
     period: list[int] | None = None          # [año_inicio, año_fin]
     baseline: list[int] | None = None
     threshold: float = 1.0                   # wet_days
@@ -327,10 +328,15 @@ class MeasureRequest(BaseModel):
 @app.get("/api/measures")
 def list_measures():
     """Catálogo de medidas con su disponibilidad según los datos descargados."""
+    t = dataset().time.values
+    years = {"diario": [int(pd.Timestamp(t[0]).year), int(pd.Timestamp(t[-1]).year)]}
+    if config.MONTHLY_FILE.exists():
+        tm = measures._monthly_grid().time.to_index()
+        years["mensual"] = [int(tm[0].year), int(tm[-1].year)]
     out = []
     for m in measures.CATALOG.values():
         ok, why = measures.available(m)
-        out.append({**measures.asdict(m), "disponible": ok, "motivo": why})
+        out.append({**measures.asdict(m), "disponible": ok, "motivo": why, "anios_disponibles": years.get(m.datos)})
     return out
 
 

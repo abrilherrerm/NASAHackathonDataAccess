@@ -380,12 +380,37 @@ def spi_class(x: np.ndarray) -> np.ndarray:
     return np.select(conds, names, default="extremo húmedo")
 
 
-def season_indices(s: pd.Series, months: list[int], p95_wet: float | None) -> pd.DataFrame:
+def in_season(index: pd.DatetimeIndex, season: str) -> np.ndarray:
+    """Temporadas oficiales: lluvias 15 may–15 nov; secas = complemento exacto (16 nov–14 may)."""
+    m, d = index.month, index.day
+    wet = ((m == 5) & (d >= 15)) | m.isin([6, 7, 8, 9, 10]) | ((m == 11) & (d <= 15))
+    return np.asarray(wet if season == "lluvias" else ~wet)
+
+
+SEASON_NAMES = {"lluvias": "lluvias 15may–15nov", "secas": "secas 16nov–14may"}
+
+
+def window_days(s: pd.Series, months=None, season=None) -> tuple[pd.Series, pd.Series, list[int]]:
+    """Días dentro de la ventana (temporada oficial o lista de meses), su temporada-año (las que
+    cruzan el año cuentan en el año en que terminan) y las temporadas con >= MIN_DAY_FRAC de días."""
+    idx = s.index
+    if season:
+        mask, start = in_season(idx, season), (11 if season == "secas" else None)
+    else:
+        months = list(months)
+        mask, start = np.asarray(idx.month.isin(months)), (months[0] if months != sorted(months) else None)
+    key = pd.Series(idx.year + ((idx.month >= start).astype(int) if start else 0), index=idx)
+    x, k = s[mask], key[mask]
+    frac = x.notna().groupby(k).mean()
+    return x, k, [int(y) for y, f in frac.items() if f >= MIN_DAY_FRAC]
+
+
+def season_indices(s: pd.Series, months, season, p95_wet: float | None) -> pd.DataFrame:
     """Índices ETCCDI por temporada (año) con temporada completa."""
-    mt = monthly_totals(s)
+    xs, ks, years = window_days(s, months, season)
     rows = {}
-    for y in complete_years(mt, months):
-        x = s[(s.index.year == y) & s.index.month.isin(months)]
+    for y in years:
+        x = xs[ks == y]
         dry_runs = (x < WET_MM).astype(int)
         cdd = dry_runs.groupby((dry_runs == 0).cumsum()).sum().max()
         rows[y] = {
@@ -403,17 +428,16 @@ def season_indices(s: pd.Series, months: list[int], p95_wet: float | None) -> pd
 
 def cmd_season(args):
     s, label = resolve_series(args)
-    months = args.months
+    months, season = args.months, (None if args.months else args.window)
     base0, base1 = args.base
-    mt = monthly_totals(s)
-    years = complete_years(mt, months)
+    xs, ks, years = window_days(s, months, season)
     base_years = [y for y in years if base0 <= y <= base1]
-    seas = "".join(MONTHS_ES[m - 1][0].upper() for m in months)
-    print(f"\n{label} · temporada {seas} · temporadas completas: {years or 'ninguna'}")
+    seas = SEASON_NAMES[season].split()[0] if season else "".join(MONTHS_ES[m - 1][0].upper() for m in months)
+    print(f"\n{label} · temporada {SEASON_NAMES.get(season, seas)} · temporadas completas: {years or 'ninguna'}")
 
-    in_base = s[s.index.year.isin(base_years) & s.index.month.isin(months)]
+    in_base = xs[ks.isin(base_years)]
     p95 = float(np.nanpercentile(in_base[in_base >= WET_MM], 95)) if len(in_base) else None
-    df = season_indices(s, months, p95)
+    df = season_indices(s, months, season, p95)
     if df.empty:
         warn("No hay ninguna temporada completa."); return
 
@@ -450,7 +474,7 @@ def cmd_season(args):
                   f"esperado {v['esperado_ref']:.0%}; p={v['p_binomial(mayor_que_ref)']})")
         if ev.shape[0] and ev.shape[0] < 10:
             warn(f"n={ev.shape[0]} temporadas evaluadas: la prueba binomial sólo detectaría cambios enormes (tipo II).")
-        save(f"season_{_slug(label)}_{seas}.json", {"serie": label, "temporada": months, "referencia": base_years,
+        save(f"season_{_slug(label)}_{seas}.json", {"serie": label, "temporada": SEASON_NAMES.get(season) or months, "referencia": base_years,
                                                     "provisional": not enough, "p95_dias_lluvia_ref": p95,
                                                     "rebases": summary})
     else:
@@ -712,13 +736,17 @@ def main():
     p.add_argument("--boot", type=int, default=2000); p.add_argument("--seed", type=int, default=0)
     p.set_defaults(fn=cmd_travel)
     p = sub.add_parser("season"); target(p, ["09"])
-    p.add_argument("--months", nargs="+", type=int, default=[6, 7, 8, 9], help="meses de la temporada (JJAS)")
+    p.add_argument("--window", choices=["lluvias", "secas"], default="lluvias",
+                   help="temporada oficial: lluvias 15 may–15 nov (def.) o secas 16 nov–14 may")
+    p.add_argument("--months", nargs="+", type=int, help="meses personalizados (sustituye a --window), p. ej. 6 7 8 9")
     p.add_argument("--base", nargs=2, type=int, default=[2001, 2020], help="años de referencia")
     p.add_argument("--eval", nargs=2, type=int, default=[2021, 2025], help="años a evaluar contra la referencia")
     p.add_argument("--force", action="store_true", help="anomalías provisionales aunque falten años")
     p.set_defaults(fn=cmd_season)
     p = sub.add_parser("trends"); target(p, ["09"])
-    p.add_argument("--months", nargs="+", type=int, default=[6, 7, 8, 9]); p.set_defaults(fn=cmd_trends)
+    p.add_argument("--months", nargs="+", type=int, default=[5, 6, 7, 8, 9, 10, 11],
+                   help="meses de la temporada (def. may–nov: aproximación mensual de la temporada oficial)")
+    p.set_defaults(fn=cmd_trends)
     p = sub.add_parser("power")
     p.add_argument("--n", nargs="+", type=int, default=[5, 10, 15, 20, 25])
     p.add_argument("--cv", nargs="+", type=float, default=[0.2, 0.3])

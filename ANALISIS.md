@@ -62,7 +62,7 @@ menor a "la lluvia casi se duplicó". Con 25 años (IMERG desde 2000) se detecta
 ### ¿Cuántas temporadas de lluvia en la ZMVM rebasaron el umbral de anomalía? (`season`)
 - **Región**: CDMX + 17 municipios conurbados del Edomex, promedio ponderado por área
   (aproximación; la delimitación oficial tiene 76 municipios — editar `REGIONS["zmvm"]`).
-- **Temporada**: JJAS por defecto (`--months`).
+- **Temporada**: oficial 15 may–15 nov por defecto (`--window lluvias|secas`; `--months` para otra). Ver §8.
 - **Umbral**: SPI de la temporada con gamma ajustada a la referencia; rebase = SPI ≤ −1 (seco) o ≥ +1 (húmedo),
   esperado 15.9 % de los años cada uno. También Rx1day > P90 de la referencia.
 - **Frecuencia**: k/n con IC exacto de Clopper-Pearson + prueba binomial contra lo esperado.
@@ -144,3 +144,47 @@ Decisiones de diseño:
   evidencia no se lea como evidencia de ausencia (error tipo II).
 - **Ocultar p-valores con confianza baja** evita que alguien encuentre "significancia" en 3 años de datos.
 - Lugares: `{"cve": "09"}`, `{"point": [lat, lon]}` o `{"geometry": GeoJSON}` — los mismos que ya usa la app.
+
+## 8. Temporadas: binario oficial lluvias / secas
+
+**Por defecto se usa la temporada oficial**: lluvias **15 may–15 nov** y secas **16 nov–14 may** (complemento
+exacto, sin traslape). Jun–sep queda como opción "núcleo lluvioso" sólo para comparar con la literatura del monzón.
+
+**Por qué no jun–sep** (diario 2021–2024, `data/analysis/ventana_temporada.csv`):
+
+| | Jun–sep | Oficial | Lluvia de temporada que deja fuera jun–sep |
+|---|---|---|---|
+| México | 70.5 % del total anual | 86.2 % | 18 % |
+| CDMX | 75 % | 88 % | 15 % |
+| Golfo, sureste y noreste | 52–63 % | 76–84 % | 25–33 % (lluvias de mayo, ciclones de oct–nov, nortes) |
+| Pacífico occidental / monzón | 75–88 % | 79–97 % | 5–11 % |
+
+Con 27 temporadas mensuales (1998–2024): el orden de los años casi no cambia (Spearman 0.70–0.94), pero la
+clase seco/normal/húmedo cambia en 4–37 % de los años (nunca de seco a húmedo) y la significancia de la
+tendencia cambia en Veracruz, Tabasco, Chiapas y BCS. **La ventana se fija antes de ver los resultados**:
+elegirla según lo que "salga" infla el error tipo I.
+
+**Por qué binario y no cuatro estaciones** (climatología mensual 1998–2024, % del total anual):
+
+| | dic–feb | mar–may | jun–ago | sep–nov | lluvias | secas |
+|---|---|---|---|---|---|---|
+| México | 8 | 9 | 49 | 33 | 86 | 14 |
+| CDMX | 3 | 13 | 55 | 29 | 88 | 12 |
+| Tabasco | 14 | 9 | 35 | 42 | 78 | 22 |
+| Baja California | **47** | 19 | 12 | 21 | 35 | **65** |
+
+Los trimestres parten la temporada de lluvias a la mitad y dejan dos estaciones casi vacías: son un calendario
+de temperatura de latitudes medias, no un régimen de lluvia. Quien los necesite (comparación internacional)
+puede armarlos con los meses personalizados.
+
+**Excepciones regionales**: Baja California tiene régimen de lluvias de **invierno** (65 % del total en la
+temporada "seca" oficial); BCS reparte ~1/3 fuera de la oficial. Ahí "temporada de lluvias" no significa lo mismo.
+
+**Datos mensuales** no se pueden cortar a medio mes; se usa la partición más cercana sin traslape:
+- Lluvias → may–nov completo: **+5 %** de lluvia vs el corte exacto (de +1 a +11 % por estado). Sesgo casi constante:
+  no afecta anomalías ni tendencias.
+- Secas → dic–abr completo: **−34 %** (de −6 a −57 %): los días de transición (16–30 nov, 1–14 may) concentran mucha
+  de la poca lluvia de secas. Para **totales** de secas usar medidas diarias (corte exacto).
+
+**Comparaciones** (modo A | B): las cantidades (mm, días) se comparan en **% relativo**; las probabilidades y
+porcentajes en **puntos porcentuales** (pp), porque un "% de un %" se malinterpreta fácilmente.

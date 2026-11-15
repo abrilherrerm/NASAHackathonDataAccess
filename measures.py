@@ -3,7 +3,7 @@
 En lugar de preguntas prefabricadas, el usuario elige:
     LUGAR      punto, área dibujada o entidad INEGI
     MEDIDA     una del CATALOG (abajo)
-    MESES      cualquier subconjunto (temporada), p. ej. [6, 7, 8, 9]
+    TEMPORADA  oficial ('lluvias' 15 may–15 nov / 'secas' 16 nov–14 may) o cualquier lista de meses
     PERIODO    años a describir
     CONTRA     referencia climatológica, otro periodo u otro lugar
 
@@ -32,7 +32,7 @@ import xarray as xr
 from scipy import stats
 
 import config
-from analysis import ALPHA, HEAVY_MM, MONTHS_ES, WET_MM, _json_default, spi_class
+from analysis import ALPHA, HEAVY_MM, MONTHS_ES, WET_MM, _json_default, in_season, spi_class
 
 BASELINE = (1998, 2020)    # referencia por defecto (23 años de IMERG; OMM pide 30, 1991–2020)
 
@@ -420,7 +420,11 @@ def m_compare_periods(place, months=range(1, 13), a=None, b=None, **_):
         cliff = float((np.sign(diffs)).mean())
         rng = np.random.default_rng(0)
         boot = [np.median((rng.choice(B, len(B))[:, None] - rng.choice(A, len(A))[None, :]).ravel()) for _ in range(2000)]
-        out.update(cambio_b_menos_a_mm=round(hl, 1), cambio_pct=round(float(100 * hl / np.median(A)), 1),
+        base = float(np.median(A))
+        out.update(cambio_pct=round(100 * hl / base, 1),
+                   ic95_pct=[round(float(100 * np.percentile(boot, 2.5) / base), 1),
+                             round(float(100 * np.percentile(boot, 97.5) / base), 1)],
+                   cambio_b_menos_a_mm=round(hl, 1),
                    ic95_mm=[round(float(np.percentile(boot, 2.5)), 1), round(float(np.percentile(boot, 97.5)), 1)],
                    p_mann_whitney=_p(mw.pvalue), significativo=bool(mw.pvalue < ALPHA),
                    delta_cliff=round(cliff, 2),
@@ -439,7 +443,11 @@ def m_compare_places(place, place2=None, months=range(1, 13), period=None, **_):
            "mediana_b_mm": round(float(t2[common].median()), 1)}
     if len(d) >= 5:
         w = stats.wilcoxon(d)
-        out.update(diferencia_mediana_b_menos_a_mm=round(float(np.median(d)), 1), ic95_mm=_boot_ci(d, np.median),
+        base = float(t1[common].median())
+        ci = _boot_ci(d, np.median)
+        out.update(diferencia_pct=round(100 * float(np.median(d)) / base, 1),
+                   ic95_pct=[round(100 * c / base, 1) if c is not None else None for c in ci],
+                   diferencia_mediana_b_menos_a_mm=round(float(np.median(d)), 1), ic95_mm=ci,
                    p_wilcoxon=_p(w.pvalue), significativo=bool(w.pvalue < ALPHA),
                    anios_b_mas_lluvioso=int((d > 0).sum()), anios_comparados=len(d))
     return _result("compare_places", l1, len(d), **out)
@@ -448,55 +456,90 @@ def m_compare_places(place, place2=None, months=range(1, 13), period=None, **_):
 # ---------------------------------------------------------------------------
 # Medidas diarias
 # ---------------------------------------------------------------------------
-def _daily_by_year(place, months, period):
+# Temporadas oficiales (SMN): lluvias 15 may–15 nov y su complemento exacto, sin traslape.
+# Con datos mensuales no se puede cortar a medio mes: se usa la partición mensual más cercana
+# (may–nov / dic–abr), también sin traslape, y se avisa cuánto difiere.
+SEASONS = {
+    "lluvias": {"nombre": "Temporada de lluvias (15 may–15 nov)", "mensual": [5, 6, 7, 8, 9, 10, 11],
+                "nota_mensual": "Datos mensuales: se usa may–nov completo, que suma más lluvia que el corte exacto "
+                                "15 may–15 nov (mediana +5 %, de +1 a +11 % según el estado). No afecta anomalías "
+                                "ni tendencias porque el sesgo es casi constante entre años."},
+    "secas": {"nombre": "Temporada seca (16 nov–14 may)", "mensual": [12, 1, 2, 3, 4],
+              "nota_mensual": "Datos mensuales: se usa dic–abr completo, que deja fuera 16–30 nov y 1–14 may. "
+                              "Esos días de transición concentran mucha de la poca lluvia de secas: el total sale "
+                              "~34 % menor (de 6 a 57 % según el estado). Para totales de secas usa medidas diarias; "
+                              "anomalías y tendencias siguen siendo comparables entre años."},
+}
+
+
+def _daily_window(place, months, period, season=None):
+    """Serie diaria con NaN fuera de la ventana (calendario completo, para que las ventanas móviles
+    no salten entre temporadas), clave de temporada-año y años completos (>= 90 % de días)."""
     s, label = daily_series(place)
-    s = s[s.index.month.isin(list(months))]
-    if period:
-        s = s[(s.index.year >= period[0]) & (s.index.year <= period[1])]
-    days_per_year = s.notna().groupby(s.index.year).sum()
-    full = s.index.to_series().groupby(s.index.year).count()
-    good = days_per_year[days_per_year >= 0.9 * full].index
-    return s[s.index.year.isin(good)], label, list(good)
+    idx = s.index
+    if season:
+        mask, start = in_season(idx, season), (11 if season == "secas" else None)
+    else:
+        months = list(months)
+        mask, start = np.asarray(idx.month.isin(months)), (months[0] if months != sorted(months) else None)
+    # Temporadas que cruzan el año se asignan al año en que terminan
+    key = pd.Series(idx.year + ((idx.month >= start).astype(int) if start else 0), index=idx)
+    inwin = s.where(mask)
+    present = inwin.notna().groupby(key).sum()
+    expected = pd.Series(mask, index=idx).groupby(key).sum()
+    good = [int(k) for k in expected.index if expected[k] > 0 and present[k] >= 0.9 * expected[k]
+            and (not period or period[0] <= k <= period[1])]
+    inwin = inwin.where(key.isin(good))
+    return inwin, key, label, good
 
 
-def m_wet_days(place, months=range(1, 13), period=None, threshold=WET_MM, **_):
+def _window_label(months, season):
+    return SEASONS[season]["nombre"] if season else _mlabel(months)
+
+
+def m_wet_days(place, months=range(1, 13), period=None, threshold=WET_MM, season=None, **_):
     from analysis import MIN_YEARS_YEAR_BOOT, bootstrap_stat
-    s, label, years = _daily_by_year(place, months, period)
+    s, key, label, years = _daily_window(place, months, period, season)
     ind = (s >= threshold).astype(float).where(s.notna())
-    segs = [g.dropna().values for _, g in ind.groupby(ind.index.year)]
+    segs = [g.dropna().values for _, g in ind.groupby(key) if g.notna().any()]
     by_year = len(years) >= MIN_YEARS_YEAR_BOOT
     b = bootstrap_stat(segs, np.mean, 7, 2000, np.random.default_rng(0), by_year) if segs else np.array([np.nan])
     p = float(ind.mean())
-    return _result("wet_days", label, len(years), meses=_mlabel(months), umbral_mm=threshold,
+    return _result("wet_days", label, len(years), meses=_window_label(months, season), umbral_mm=threshold,
                    prob_pct=round(100 * p, 1), ic95_pct=[round(100 * np.nanpercentile(b, 2.5), 1),
                                                          round(100 * np.nanpercentile(b, 97.5), 1)],
                    dias_esperados_por_mes=round(30.4 * p, 1), anios=years,
                    ic_incluye_variabilidad_interanual=by_year)
 
 
-def m_dry_spell(place, months=range(1, 13), period=None, dias=7, **_):
-    s, label, years = _daily_by_year(place, months, period)
+def m_dry_spell(place, months=range(1, 13), period=None, dias=7, season=None, **_):
+    s, key, label, years = _daily_window(place, months, period, season)
     wet = (s >= WET_MM).astype(float).where(s.notna())
+    # ventana que EMPIEZA cada día; NaN si se sale de la temporada (no cruza el hueco entre temporadas)
     win = wet[::-1].rolling(dias, min_periods=dias).sum()[::-1]
-    p = float((win == 0).mean())
+    p = float((win == 0).sum() / win.notna().sum()) if win.notna().any() else np.nan
     cdd = {}
-    for y, g in wet.groupby(wet.index.year):
-        dry = (g == 0).astype(int)
-        cdd[int(y)] = int(dry.groupby((dry == 0).cumsum()).sum().max())
-    return _result("dry_spell", label, len(years), meses=_mlabel(months), dias=dias,
+    for y, g in wet.groupby(key):
+        g = g.dropna()
+        if len(g):
+            dry = (g == 0).astype(int)
+            cdd[int(y)] = int(dry.groupby((dry == 0).cumsum()).sum().max())
+    return _result("dry_spell", label, len(years), meses=_window_label(months, season), dias=dias,
                    prob_ventana_seca_pct=round(100 * p, 1),
                    racha_seca_mas_larga_por_anio=cdd, racha_mediana=float(np.median(list(cdd.values()))) if cdd else None)
 
 
-def m_intensity(place, months=range(1, 13), period=None, **_):
-    s, label, years = _daily_by_year(place, months, period)
+def m_intensity(place, months=range(1, 13), period=None, season=None, **_):
+    s, key, label, years = _daily_window(place, months, period, season)
     rows = {}
-    for y, g in s.groupby(s.index.year):
+    for y, g in s.groupby(key):
+        if not g.notna().any():
+            continue
         rows[int(y)] = {"SDII_mm": round(float(g[g >= WET_MM].mean()), 1), "Rx1day_mm": round(float(g.max()), 1),
                         "Rx5day_mm": round(float(g.rolling(5).sum().max()), 1),
                         "dias_fuertes": int((g >= HEAVY_MM).sum())}
     df = pd.DataFrame(rows).T
-    return _result("intensity", label, len(years), meses=_mlabel(months),
+    return _result("intensity", label, len(years), meses=_window_label(months, season),
                    mediana=df.median().round(1).to_dict() if len(df) else None, por_anio=rows)
 
 
@@ -532,8 +575,20 @@ def resolution_note(place: dict) -> dict | None:
     return note
 
 
-def compute(measure: str, place: dict, **params) -> dict:
+def compute(measure: str, place: dict, season: str | None = None, **params) -> dict:
+    """`season` = 'lluvias' | 'secas' (oficiales). Diario: corte exacto. Mensual: partición mensual más cercana."""
+    m = CATALOG[measure]
+    if season:
+        if season not in SEASONS:
+            raise ValueError(f"Temporada {season!r} no existe (usa {', '.join(SEASONS)}).")
+        if m.datos == "diario":
+            params["season"] = season
+        else:
+            params["months"] = SEASONS[season]["mensual"]
     res = FUNCS[measure](place, **params)
+    if season and m.datos == "mensual" and measure not in ("drought", "mom"):
+        res["meses"] = SEASONS[season]["nombre"] + " · aprox. " + _mlabel(SEASONS[season]["mensual"])
+        res["nota_ventana"] = SEASONS[season]["nota_mensual"]
     note = resolution_note(place)
     if note:
         res["resolucion"] = note

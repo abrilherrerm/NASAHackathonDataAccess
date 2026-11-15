@@ -75,7 +75,11 @@
   .mchips { display:flex; flex-wrap:wrap; gap:4px; }
   .mchip { font-size:12px; padding:3px 7px; border-radius:999px; }
   .mchip.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .mchip.half { background:linear-gradient(90deg, transparent 50%, var(--accent) 50%); color:var(--text); }
+  .mchip.half.end { background:linear-gradient(90deg, var(--accent) 50%, transparent 50%); }
   #panel-B .mchip.on { background:var(--series-b); border-color:var(--series-b); }
+  #panel-B .mchip.half { background:linear-gradient(90deg, transparent 50%, var(--series-b) 50%); }
+  #panel-B .mchip.half.end { background:linear-gradient(90deg, var(--series-b) 50%, transparent 50%); }
   .badge { font-size:12px; font-weight:600; padding:2px 8px; border-radius:999px; color:#fff; }
   .badge.alta { background:#2b8a3e; } .badge.media { background:#e67700; }
   .badge.baja { background:#868e96; } .badge.no-disponible { background:#c92a2a; }
@@ -212,10 +216,10 @@ function panelHTML(k) {
         <label>Medida <select data-f="mSel"></select></label>
         <label>Meses
           <select data-f="mPreset">
+            <option value="lluvias" selected>Temporada de lluvias (15 may–15 nov)</option>
+            <option value="secas">Temporada seca (16 nov–14 may)</option>
             <option value="1,2,3,4,5,6,7,8,9,10,11,12">Año completo</option>
-            <option value="6,7,8,9">Lluvias (jun–sep)</option>
-            <option value="11,12,1,2,3,4">Secas (nov–abr)</option>
-            <option value="12,1,2">Invierno (dic–feb)</option>
+            <option value="6,7,8,9">Núcleo lluvioso jun–sep (literatura)</option>
             <option value="custom">Personalizado</option>
           </select></label>
         <label>Años desde <input type="number" data-f="mY0" style="width:80px"></label>
@@ -669,26 +673,49 @@ async function initMeasures(p) {
     `<optgroup label="Escala diaria (2020 →)">${UI_MEASURES.filter(id => p.catalog[id]?.datos === 'diario').map(opt).join('')}</optgroup>
      <optgroup label="Escala mensual (1998 →)">${UI_MEASURES.filter(id => p.catalog[id]?.datos === 'mensual').map(opt).join('')}</optgroup>`;
   p.el('mY0').value = info.start.slice(0, 4); p.el('mY1').value = info.end.slice(0, 4);
-  p.months = [...Array(12).keys()].map(i => i + 1);
-  p.el('mPreset').onchange = e => { if (e.target.value !== 'custom') { p.months = e.target.value.split(',').map(Number); renderChips(p); } };
+  for (const f of ['mY0', 'mY1']) p.el(f).addEventListener('input', () => { p.yearsTouched = true; });
+  applyPreset(p, 'lluvias');
+  p.el('mPreset').onchange = e => { if (e.target.value !== 'custom') applyPreset(p, e.target.value); };
   p.el('mSel').onchange = () => showParams(p);
   renderChips(p); showParams(p);
 }
 
 function showParams(p) {
   const id = p.el('mSel').value;
+  // Años por defecto = todo lo disponible para la escala de la medida (diario 2020→ / mensual 1998→),
+  // salvo que el usuario ya los haya editado
+  const yrs = p.catalog?.[id]?.anios_disponibles;
+  if (yrs && !p.yearsTouched) { p.el('mY0').value = yrs[0]; p.el('mY1').value = yrs[1]; }
   p.el('mSel').closest('.card').querySelectorAll('.param').forEach(l =>
     l.classList.toggle('show', (PARAMS[id] || []).includes(l.dataset.param)));
   const noMonths = NO_MONTHS.includes(id);
   p.el('mPreset').disabled = noMonths; p.el('mChips').style.opacity = noMonths ? 0.4 : 1;
 }
 
+// Temporadas oficiales (corte exacto con datos diarios). `half`: mes que la temporada cubre a la mitad.
+const SEASON_UI = {
+  lluvias: { months: [5, 6, 7, 8, 9, 10, 11], half: { 5: 'start', 11: 'end' } },   // 15 may → 15 nov
+  secas: { months: [11, 12, 1, 2, 3, 4, 5], half: { 11: 'start', 5: 'end' } },     // 16 nov → 14 may
+};
+
+function applyPreset(p, value) {
+  p.season = SEASON_UI[value] ? value : null;
+  p.months = p.season ? [...SEASON_UI[value].months] : value.split(',').map(Number);
+  p.el('mPreset').value = value;
+  renderChips(p);
+}
+
 function renderChips(p) {
-  p.el('mChips').innerHTML = MONTHS.map((m, i) =>
-    `<button class="mchip ${p.months.includes(i + 1) ? 'on' : ''}" data-month="${i + 1}">${m}</button>`).join('');
+  const half = p.season ? SEASON_UI[p.season].half : {};
+  p.el('mChips').innerHTML = MONTHS.map((m, i) => {
+    const h = half[i + 1], on = p.months.includes(i + 1);
+    const cls = h ? `half ${h === 'end' ? 'end' : ''}` : on ? 'on' : '';
+    return `<button class="mchip ${cls}" data-month="${i + 1}" ${h ? `title="${h === 'start' ? 'desde el 15/16' : 'hasta el 14/15'}"` : ''}>${m}</button>`;
+  }).join('');
 }
 
 function toggleMonth(p, m) {
+  p.season = null;                                   // al editar meses deja de ser la temporada oficial
   const set = new Set(p.months);
   set.has(m) ? set.delete(m) : set.add(m);
   if (!set.size) return;
@@ -722,7 +749,7 @@ async function runMeasure(p) {
   p.measureActive = true;
   const req = ++p.measureReq;
   const y0 = +p.el('mY0').value, y1 = +p.el('mY1').value;
-  const body = { measure: id, place, months: p.months, period: [Math.min(y0, y1), Math.max(y0, y1)],
+  const body = { measure: id, place, months: p.months, season: p.season, period: [Math.min(y0, y1), Math.max(y0, y1)],
     threshold: +p.el('mThr').value, dias: +p.el('mDias').value, scale: +p.el('mScale').value };
   p.el('mRes').innerHTML = '<p class="hint">Calculando…</p>';
   try {
@@ -752,9 +779,11 @@ function renderMeasure(p) {
     const ci = ciPath ? get(r, ciPath) : null;
     let extra = ci && ci[0] != null ? `<small style="color:var(--muted)">IC95 ${fmt(ci[0])}–${fmt(ci[1])}</small>` : '';
     const va = cmp ? get(cmp, path) : null;
-    if (typeof v === 'number' && typeof va === 'number') {
-      const d = v - va;
-      extra += `<small class="${d >= 0 ? 'up' : 'down'}">${d >= 0 ? '+' : ''}${fmt(d)} ${unit === '%' ? 'pp' : unit} vs A</small>`;
+    if (typeof v === 'number' && typeof va === 'number' && unit && !path.includes('error')) {
+      // Probabilidades/porcentajes: diferencia en puntos porcentuales; cantidades (mm, días): cambio relativo %
+      const pp = unit === '%' || unit.startsWith('%');
+      const d = pp ? v - va : (va !== 0 ? 100 * (v - va) / Math.abs(va) : null);
+      if (d != null) extra += `<small class="${d >= 0 ? 'up' : 'down'}">${d >= 0 ? '+' : ''}${fmt(d)} ${pp ? 'pp' : '%'} vs A</small>`;
     }
     const val = typeof v === 'number' ? (path.startsWith('p_') && v < 0.001 ? '< 0.001' : fmt(v, Math.abs(v) < 1 && v !== 0 ? 3 : 1)) : v;
     return `<div class="stat"><span>${fill(label)}</span><b>${val} ${unit}</b>${extra}</div>`;
@@ -782,6 +811,7 @@ function renderMeasure(p) {
     ${r.lectura ? `<p class="warn">${r.lectura}</p>` : ''}
     ${r.advertencia ? `<p class="warn">⚠ ${r.advertencia}</p>` : ''}
     ${r.resolucion?.aviso ? `<p class="warn">⚠ Resolución: ${r.resolucion.aviso}</p>` : ''}
+    ${r.nota_ventana ? `<p class="warn">ℹ ${r.nota_ventana}</p>` : ''}
     ${table}
     <details><summary>Método</summary><p>${r.metodo}</p></details>`;
 }
@@ -791,7 +821,7 @@ async function copyAtoB() {
   const A = panels.A, B = panels.B;
   for (const f of ['mapStart', 'mapEnd', 'freq', 'start', 'end', 'mSel', 'mPreset', 'mY0', 'mY1', 'mThr', 'mDias', 'mScale'])
     B.el(f).value = A.el(f).value;
-  B.months = [...A.months]; renderChips(B); showParams(B);
+  B.months = [...A.months]; B.season = A.season; B.yearsTouched = A.yearsTouched; renderChips(B); showParams(B);
   B.measureActive = A.measureActive;
   loadMap(B);
   const s = A.selection;
