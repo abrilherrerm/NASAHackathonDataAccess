@@ -12,12 +12,13 @@ de cuántos años la sostienen (no de lo que el usuario quiera ver).
 
     python measures.py list
     python measures.py total --cve 09 --months 6 7 8 9 --period 2021 2025
-    python measures.py drought --cve 09 --scale 3 --period 2020 2025
+    python measures.py drought --cve 09 --scale 3 --period 2015 2025
     python measures.py yoy --cve 14067 --months 7 --period 2024 2024
     python measures.py compare_periods --cve 09 --months 6 7 8 9 --a 1998 2010 --b 2011 2025
 
 Fuentes: mensual GPM_3IMERGM (1998→) para medidas de escala mensual; diario GPM_3IMERGDF
-(2020→) para medidas de escala diaria. No se mezclan en una misma serie (difieren ~3–4 %).
+(2014-06→) para medidas de escala diaria. No se mezclan en una misma serie (difieren ~3–4 %).
+La estadística diaria usa sólo días IMERG Final; los preliminares (Late) se excluyen.
 """
 import argparse
 import json
@@ -180,8 +181,11 @@ def available(m: Measure) -> tuple[bool, str]:
 
 
 def daily_series(place: dict) -> tuple[pd.Series, str]:
+    """Serie diaria SÓLO con días IMERG Final (los preliminares Late no entran a la estadística)."""
+    from analysis import final_only
     if _DAILY_SOURCE:
-        return _DAILY_SOURCE(place)
+        s, label = _DAILY_SOURCE(place)
+        return final_only(s), label
     from analysis import open_grid, point_series, region_series
     if "cve" in place:
         return region_series([place["cve"]])
@@ -583,6 +587,9 @@ def compute(measure: str, place: dict, season: str | None = None, **params) -> d
         else:
             params["months"] = SEASONS[season]["meses"]
     res = FUNCS[measure](place, **params)
+    if m.datos == "diario":
+        from analysis import final_end
+        res["datos_hasta"] = f"{final_end().date()} (IMERG Final; se excluyen días preliminares)"
     if season and m.datos == "mensual" and "meses" in res:
         res["meses"] = SEASONS[season]["mensual"]
     note = resolution_note(place)

@@ -1,11 +1,49 @@
 {
   "serie": "ZMVM núcleo (CDMX + 17 mun. Edomex)",
   "anios_completos": [
+    2015,
+    2016,
+    2017,
+    2018,
+    2019,
+    2020,
     2021,
     2022,
     2023,
     2024
   ],
-  "n": 4,
-  "estado": "insuficiente: 4 años completos (< 10). Cualquier 'tendencia' sería ruido o perdería significancia por falta de potencia."
+  "n": 10,
+  "estado": "ok",
+  "mensual_MK_estacional": {
+    "tendencia": "decreasing",
+    "p": 0.0282,
+    "tau": -0.159,
+    "pendiente_sen": -1.109
+  },
+  "mensual_MK_estacional_correlacionado": {
+    "tendencia": "no trend",
+    "p": 0.0814,
+    "tau": -0.159,
+    "pendiente_sen": -1.109
+  },
+  "anual_MK_original": {
+    "tendencia": "no trend",
+    "p": 0.0736,
+    "tau": -0.467,
+    "pendiente_sen": -24.714
+  },
+  "anual_Hamed_Rao": {
+    "tendencia": "no trend",
+    "p": 0.0736,
+    "tau": -0.467,
+    "pendiente_sen": -24.714
+  },
+  "temporada_Hamed_Rao": {
+    "tendencia": "no trend",
+    "p": 0.21,
+    "tau": -0.333,
+    "pendiente_sen": -15.752
+  },
+  "anual_autocorr_lag1": 0.39,
+  "unidades_pendiente": "mm/año (anual y temporada) · mm/mes por año (estacional)"
 }

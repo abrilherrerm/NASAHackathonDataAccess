@@ -81,6 +81,14 @@ def _slice(da: xr.DataArray, start: str | None, end: str | None) -> xr.DataArray
     return da.sel(time=slice(start, end))
 
 
+def _slice_final(da: xr.DataArray, start: str | None, end: str | None) -> xr.DataArray:
+    """Series y estadística: sólo IMERG Final. Los días preliminares (Late) quedan sólo para los mapas:
+    su sesgo en cantidades (+18 % regional, no corregible; ANALISIS.md §9) los hace poco confiables."""
+    from analysis import final_end
+    fe = str(final_end().date())
+    return _slice(da, start, min(end, fe) if end else fe)
+
+
 def late_start() -> pd.Timestamp | None:
     """Primer día con dato preliminar (IMERG Late), o None si todo es Final."""
     ds = dataset()
@@ -91,8 +99,11 @@ def late_start() -> pd.Timestamp | None:
 
 
 def _late_from(s: pd.Series, freq: str) -> str | None:
+    from analysis import final_end
     lf = late_start()
-    if lf is None or s.empty:
+    # Las series se recortan al último día Final: si el preliminar empieza después, no hay días Late
+    # (aunque la última barra anual/mensual "termine" después del corte)
+    if lf is None or s.empty or lf > final_end():
         return None
     last = s.index.max()
     period_end = last if freq in ("D", "W") else last + pd.tseries.frequencies.to_offset(freq) - pd.Timedelta(days=1)
@@ -132,6 +143,7 @@ def info():
         "end": str(pd.Timestamp(t[-1]).date()),
         "n_days": int(t.size),
         "late_from": str(late_start().date()) if late_start() is not None else None,
+        "final_end": str(__import__("analysis").final_end().date()),   # series y estadística hasta aquí
         "bbox": config.MEXICO_BBOX,
         "resolution_deg": round(float(abs(ds.lat[1] - ds.lat[0])), 3),
     }
@@ -147,7 +159,7 @@ def point_series(
 ):
     """Serie en la celda IMERG (0.1°) con dato más cercana al punto (en la costa la exacta puede ser mar)."""
     i, j = _nearest_cell(lat, lon)
-    da = _slice(dataset()["precipitation"].isel(lat=i, lon=j), start, end).load()
+    da = _slice_final(dataset()["precipitation"].isel(lat=i, lon=j), start, end).load()
     if da.isnull().all():
         raise HTTPException(404, "Punto fuera de México o sin datos.")
     return _series_payload(
@@ -165,7 +177,7 @@ def region_series(
 ):
     """Promedio espacial ponderado por cos(lat) dentro de un rectángulo (por defecto todo México)."""
     da = dataset()["precipitation"].sel(lat=slice(south, north), lon=slice(west, east))
-    da = _slice(da, start, end)
+    da = _slice_final(da, start, end)
     if da.size == 0:
         raise HTTPException(404, "Región vacía.")
     w = np.cos(np.deg2rad(da.lat))
@@ -210,7 +222,7 @@ def polygon_series(req: PolygonRequest):
 
     # Recorte al rectángulo de celdas tocadas + pesos = fracción × cos(lat)
     i0, i1, j0, j1 = ii.min(), ii.max() + 1, jj.min(), jj.max() + 1
-    da = _slice(full.isel(lat=slice(i0, i1), lon=slice(j0, j1)), req.start, req.end)
+    da = _slice_final(full.isel(lat=slice(i0, i1), lon=slice(j0, j1)), req.start, req.end)
     coslat = np.cos(np.deg2rad(da.lat.values))
     wgrid = np.zeros((i1 - i0, j1 - j0))
     wgrid[ii - i0, jj - j0] = frac * coslat[ii - i0]
@@ -240,7 +252,7 @@ def entity_series(cvegeo: str, start: str | None = None, end: str | None = None,
     if cvegeo not in zs.region.values:
         raise HTTPException(404, f"Clave {cvegeo!r} no encontrada.")
     r = zs.sel(region=cvegeo)
-    da = _slice(r["precipitation"], start, end)
+    da = _slice_final(r["precipitation"], start, end)
     area = float(r.area_km2)
     nivel = str(r.nivel.values)
     nombre = str(r.nombre.values)
@@ -328,8 +340,9 @@ class MeasureRequest(BaseModel):
 @app.get("/api/measures")
 def list_measures():
     """Catálogo de medidas con su disponibilidad según los datos descargados."""
+    from analysis import final_end
     t = dataset().time.values
-    years = {"diario": [int(pd.Timestamp(t[0]).year), int(pd.Timestamp(t[-1]).year)]}
+    years = {"diario": [int(pd.Timestamp(t[0]).year), int(final_end().year)]}   # estadística: sólo Final
     if config.MONTHLY_FILE.exists():
         tm = measures._monthly_grid().time.to_index()
         years["mensual"] = [int(tm[0].year), int(tm[-1].year)]

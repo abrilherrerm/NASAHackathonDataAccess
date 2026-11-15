@@ -18,6 +18,7 @@ import argparse
 import json
 import sys
 import warnings
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -104,8 +105,7 @@ def region_series(cves: list[str], zs: xr.Dataset | None = None) -> tuple[pd.Ser
     sub = zs.sel(region=cves)
     w = sub.area_km2
     da = (sub.precipitation * w).sum("region", min_count=1) / w.sum()
-    s = da.to_series()
-    s = s.reindex(pd.date_range(s.index.min(), s.index.max(), freq="D"))
+    s = final_only(da.to_series())
     names = [str(n) for n in sub.nombre.values]
     label = names[0] if len(names) == 1 else f"{names[0]} + {len(names) - 1} regiones"
     return s.astype("float64"), label
@@ -119,16 +119,45 @@ def point_series(lat: float, lon: float) -> tuple[pd.Series, str]:
     d2 = np.where(valid, (LA - lat) ** 2 + ((LO - lon) * np.cos(np.deg2rad(lat))) ** 2, np.inf)
     i, j = np.unravel_index(np.argmin(d2), d2.shape)
     da = pr.isel(lat=i, lon=j).load()
-    s = da.to_series()
-    s = s.reindex(pd.date_range(s.index.min(), s.index.max(), freq="D"))
+    s = final_only(da.to_series())
     return s.astype("float64"), f"Celda ({float(da.lat):.2f}, {float(da.lon):.2f})"
 
 
-def open_grid() -> xr.Dataset:
+def _daily_files() -> list:
     files = sorted(config.PROCESSED_DIR.glob("imerg_mexico_daily_*.nc"))
     if not files:
         sys.exit("No hay NetCDF procesados. Corre process.py.")
-    return xr.open_mfdataset(files, combine="by_coords", chunks={})
+    return files
+
+
+@lru_cache(maxsize=2)
+def _final_end(sig: tuple) -> pd.Timestamp:
+    ds = xr.open_mfdataset([p for p, _ in sig], combine="by_coords", chunks={})
+    t = pd.DatetimeIndex(ds.time.values)
+    if "is_late" not in ds:
+        return t[-1]
+    final = ds["is_late"].values != 1
+    return t[final][-1] if final.any() else t[0] - pd.Timedelta(days=1)
+
+
+def final_end() -> pd.Timestamp:
+    """Último día IMERG **Final** (calibrado con pluviómetros). Después vienen días preliminares (Late),
+    que se muestran en las gráficas pero NO entran a la estadística. Se recalcula si cambian los archivos."""
+    return _final_end(tuple((str(f), f.stat().st_mtime) for f in _daily_files()))
+
+
+def final_only(s: pd.Series) -> pd.Series:
+    """Recorta al último día Final y rellena a años calendario completos (NaN): así una temporada que
+    el corte deja a medias (p. ej. lluvias 2025 truncada al 30 sep) se detecta como incompleta."""
+    s = s[s.index <= final_end()]
+    full = pd.date_range(f"{s.index.min().year}-01-01", f"{s.index.max().year}-12-31", freq="D")
+    return s.reindex(full)
+
+
+def open_grid(final: bool = True) -> xr.Dataset:
+    """Malla diaria; por defecto recortada al último día Final (sin días preliminares)."""
+    ds = xr.open_mfdataset(_daily_files(), combine="by_coords", chunks={})
+    return ds.sel(time=slice(None, final_end())) if final else ds
 
 
 def monthly_totals(s: pd.Series) -> pd.Series:
@@ -685,14 +714,27 @@ def cmd_clusters(args):
 # 8. Campo de tendencias con control de FDR (multiplicidad espacial)
 # ---------------------------------------------------------------------------
 def cmd_field(args):
-    pr = open_grid()["precipitation"]
-    full = pd.date_range(pd.Timestamp(pr.time.values[0]), pd.Timestamp(pr.time.values[-1]), freq="D")
-    days = pd.Series(1, index=pd.DatetimeIndex(pr.time.values)).reindex(full).fillna(0)
-    yr_frac = days.groupby(days.index.year).mean()
-    years = [int(y) for y, f in yr_frac.items() if f >= MIN_DAY_FRAC and (days.index.year == y).sum() >= 365]
+    """Tendencia por celda. Por defecto con el registro MENSUAL largo (1998→): con sólo ~10 años diarios,
+    la variabilidad decenal (p. ej. 2015–2018 húmedos, 2019–2023 secos) aparece como "tendencia" en ~40 %
+    de las celdas, contra ~10 % con 27 años. `--daily` usa el diario Final sólo para comparar."""
+    if args.daily:
+        pr = open_grid()["precipitation"]
+        full = pd.date_range(pd.Timestamp(pr.time.values[0]), pd.Timestamp(pr.time.values[-1]), freq="D")
+        days = pd.Series(1, index=pd.DatetimeIndex(pr.time.values)).reindex(full).fillna(0)
+        yr_frac = days.groupby(days.index.year).mean()
+        years = [int(y) for y, f in yr_frac.items() if f >= MIN_DAY_FRAC and (days.index.year == y).sum() >= 365]
+        sel, min_count, src = pr.sel(time=pr.time.dt.year.isin(years)), 300, "diario Final"
+    else:
+        if not config.MONTHLY_FILE.exists():
+            sys.exit("Falta imerg_mexico_monthly.nc: corre download_monthly.py (o usa --daily).")
+        pr = xr.open_dataset(config.MONTHLY_FILE)["precipitation"]
+        n_by_year = pr.time.dt.year.to_series().value_counts()
+        years = sorted(int(y) for y, n in n_by_year.items() if n == 12)
+        sel, min_count, src = pr.sel(time=pr.time.dt.year.isin(years)), 12, "mensual"
     if len(years) < MIN_YEARS_TREND:
         warn(f"{len(years)} años completos (< {MIN_YEARS_TREND}): campo de tendencias no calculado."); return
-    ann = pr.sel(time=pr.time.dt.year.isin(years)).groupby("time.year").sum(min_count=300).load()
+    print(f"  Totales anuales {src}: {years[0]}–{years[-1]} ({len(years)} años)")
+    ann = sel.groupby("time.year").sum(min_count=min_count).load()
     p = np.full(ann.shape[1:], np.nan); slope = p.copy()
     for i in range(ann.shape[1]):
         for j in range(ann.shape[2]):
@@ -708,7 +750,8 @@ def cmd_field(args):
           f"~{ALPHA:.0%} esperado por azar) · significativas con FDR q={FDR_Q}: {sig_fdr.sum()}")
     xr.Dataset({"p_hamed_rao": (("lat", "lon"), p), "sen_mm_anio": (("lat", "lon"), slope),
                 "significativo_fdr": (("lat", "lon"), sig_fdr)},
-               coords={"lat": ann.lat, "lon": ann.lon}).to_netcdf(OUT_DIR / "field_trends.nc")
+               coords={"lat": ann.lat, "lon": ann.lon},
+               attrs={"fuente": src, "anios": f"{years[0]}–{years[-1]}"}).to_netcdf(OUT_DIR / "field_trends.nc")
     print("  → data/analysis/field_trends.nc")
 
 
@@ -757,7 +800,9 @@ def main():
     p.add_argument("--kmin", type=int, default=4); p.add_argument("--kmax", type=int, default=10)
     p.add_argument("--k", type=int, help="fijar k (si no, el de mayor silueta)")
     p.add_argument("--seed", type=int, default=0); p.set_defaults(fn=cmd_clusters)
-    p = sub.add_parser("field"); p.set_defaults(fn=cmd_field)
+    p = sub.add_parser("field")
+    p.add_argument("--daily", action="store_true", help="usar el diario Final (~10 años) en vez del mensual 1998→")
+    p.set_defaults(fn=cmd_field)
 
     args = ap.parse_args()
     args.fn(args)

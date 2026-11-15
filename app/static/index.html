@@ -261,8 +261,12 @@ async function createPanel(k) {
   });
 
   // Fechas
-  for (const f of ['start', 'end', 'mapStart', 'mapEnd']) { el(f).min = info.start; el(f).max = info.end; }
-  el('start').value = info.start; el('end').value = info.end;
+  // Mapas: todo (incluye preliminar). Series y estadística: sólo hasta el último día Final.
+  const seriesEnd = info.final_end || info.end;
+  for (const f of ['start', 'end', 'mapStart', 'mapEnd']) el(f).min = info.start;
+  el('mapStart').max = el('mapEnd').max = info.end;
+  el('start').max = el('end').max = seriesEnd;
+  el('start').value = info.start; el('end').value = seriesEnd;
   const y = info.end.slice(0, 4);
   el('mapStart').value = `${y}-01-01` < info.start ? info.start : `${y}-01-01`;
   el('mapEnd').value = info.end;
@@ -670,7 +674,7 @@ async function initMeasures(p) {
   const opt = id => { const m = p.catalog[id]; if (!m) return '';
     return `<option value="${id}" ${m.disponible ? '' : 'disabled'}>${m.nombre}${m.disponible ? '' : ' (faltan datos)'}</option>`; };
   p.el('mSel').innerHTML =
-    `<optgroup label="Escala diaria (2020 →)">${UI_MEASURES.filter(id => p.catalog[id]?.datos === 'diario').map(opt).join('')}</optgroup>
+    `<optgroup label="Escala diaria (2014 →)">${UI_MEASURES.filter(id => p.catalog[id]?.datos === 'diario').map(opt).join('')}</optgroup>
      <optgroup label="Escala mensual (1998 →)">${UI_MEASURES.filter(id => p.catalog[id]?.datos === 'mensual').map(opt).join('')}</optgroup>`;
   p.el('mY0').value = info.start.slice(0, 4); p.el('mY1').value = info.end.slice(0, 4);
   for (const f of ['mY0', 'mY1']) p.el(f).addEventListener('input', () => { p.yearsTouched = true; });
@@ -682,7 +686,7 @@ async function initMeasures(p) {
 
 function showParams(p) {
   const id = p.el('mSel').value;
-  // Años por defecto = todo lo disponible para la escala de la medida (diario 2020→ / mensual 1998→),
+  // Años por defecto = todo lo disponible para la escala de la medida (diario 2014→ / mensual 1998→),
   // salvo que el usuario ya los haya editado
   const yrs = p.catalog?.[id]?.anios_disponibles;
   if (yrs && !p.yearsTouched) { p.el('mY0').value = yrs[0]; p.el('mY1').value = yrs[1]; }
@@ -819,7 +823,7 @@ function renderMeasure(p) {
   p.el('mRes').innerHTML = `
     <h3>${r.medida} · ${r.lugar} <span class="chip">${r.meses ?? ''}</span>
       <span class="badge ${conf.replace(' ', '-')}" title="${r.nota_confianza}">confianza ${conf}</span> ${sig}</h3>
-    <p class="note">${r.nota_confianza} Años con datos completos: <b>${r.n_anios}</b>.
+    <p class="note">${r.nota_confianza} Años con datos completos: <b>${r.n_anios}</b>.${r.datos_hasta ? ` Datos hasta ${r.datos_hasta}.` : ''}
       ${r.ic_incluye_variabilidad_interanual === false ? 'El IC sólo refleja variación dentro de los años observados (no entre años): es optimista.' : ''}</p>
     ${tiles ? `<div class="stats">${tiles}</div>` : ''}
     ${r.lectura ? `<p class="warn">${r.lectura}</p>` : ''}
@@ -875,8 +879,8 @@ async function setCompare(on) {
 // ---------------- Inicio ----------------
 async function init() {
   info = await getJSON('/api/info');
-  $('meta').textContent = `${info.start} → ${info.end} · ${info.n_days.toLocaleString('es-MX')} días · resolución ${info.resolution_deg}°`
-    + (info.late_from ? ` · preliminar (IMERG Late) desde ${info.late_from}` : '');
+  $('meta').textContent = `Series y estadística: ${info.start} → ${info.final_end || info.end} (IMERG Final) · resolución ${info.resolution_deg}°`
+    + (info.late_from ? ` · los mapas incluyen datos preliminares (IMERG Late) ${info.late_from} → ${info.end}` : '');
   const A = await createPanel('A');
   await loadMap(A);
   selectMexico(A);

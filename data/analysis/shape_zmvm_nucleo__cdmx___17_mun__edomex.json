@@ -1,56 +1,61 @@
 {
   "serie": "ZMVM núcleo (CDMX + 17 mun. Edomex)",
-  "periodo": "2020-01-01 → 2025-09-30",
-  "dias_con_dato": 1947,
+  "periodo": "2014-06-01 → 2025-09-30",
+  "dias_con_dato": 4140,
   "anios_completos": [
+    2015,
+    2016,
+    2017,
+    2018,
+    2019,
+    2020,
     2021,
     2022,
     2023,
     2024
   ],
   "muestras_por_mes_calendario": {
-    "ene": 6,
-    "feb": 6,
-    "mar": 6,
-    "abr": 6,
-    "may": 5,
-    "jun": 5,
-    "jul": 5,
-    "ago": 5,
-    "sep": 5,
-    "oct": 5,
-    "nov": 5,
-    "dic": 5
+    "ene": 11,
+    "feb": 11,
+    "mar": 11,
+    "abr": 11,
+    "may": 11,
+    "jun": 12,
+    "jul": 12,
+    "ago": 12,
+    "sep": 12,
+    "oct": 11,
+    "nov": 11,
+    "dic": 11
   },
-  "frac_dias_secos(<0.1mm)": 0.362,
-  "frac_dias_lluvia(>=1mm)": 0.41,
-  "asimetria_diaria": 2.79,
+  "frac_dias_secos(<0.1mm)": 0.307,
+  "frac_dias_lluvia(>=1mm)": 0.465,
+  "asimetria_diaria": 2.48,
   "autocorr_lag1_diaria": 0.59,
-  "autocorr_lag1_anomalias_mensuales": 0.17,
-  "estacionalidad_kruskal_p": 2e-07,
+  "autocorr_lag1_anomalias_mensuales": 0.07,
+  "estacionalidad_kruskal_p": 3.6e-19,
   "distribucion_dias_lluvia": {
-    "n": 798,
+    "n": 1926,
     "aic": {
-      "gamma": 4157.5,
-      "lognorm": 4090.8,
-      "weibull": 4198.9
+      "gamma": 10169.5,
+      "lognorm": 10016.8,
+      "weibull": 10268.8
     },
     "best": "lognorm"
   },
   "distribucion_totales_mensuales": {
-    "n": 64,
+    "n": 136,
     "aic": {
-      "gamma": 674.3,
-      "lognorm": 677.1,
-      "weibull": 674.2
+      "gamma": 1476.1,
+      "lognorm": 1494.5,
+      "weibull": 1476.9
     },
-    "best": "weibull"
+    "best": "gamma"
   },
   "recomendaciones": [
     "Inflada en ceros y asimétrica: usar pruebas no paramétricas (Mann-Kendall, Sen, Kruskal-Wallis, bootstrap) o modelos gamma con masa en cero (SPI). Evitar t-test/OLS sobre mm.",
     "Estacionalidad significativa: comparar contra la climatología del mismo mes y usar Mann-Kendall estacional (Hirsch 1982) para tendencias mensuales.",
     "Persistencia diaria (r1=0.59): los días no son independientes -> bootstrap por bloques para IC de frecuencias diarias.",
-    "Sólo 4 años completos: NO hay potencia para tendencias (mínimo 10; ver `python analysis.py power`). Ampliar la descarga (IMERG V07 diario existe desde 1998).",
     "Sin climatología de referencia confiable (< 20 años): las anomalías y umbrales (SPI, percentiles) serían autorreferidos.",
     "Montos de días con lluvia: mejor ajuste = lognorm (AIC)."
   ]

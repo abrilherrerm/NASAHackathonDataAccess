@@ -1,56 +1,62 @@
 {
   "serie": "Puerto Vallarta",
-  "periodo": "2020-01-01 → 2025-09-30",
-  "dias_con_dato": 1947,
+  "periodo": "2014-06-01 → 2025-09-30",
+  "dias_con_dato": 4140,
   "anios_completos": [
+    2015,
+    2016,
+    2017,
+    2018,
+    2019,
+    2020,
     2021,
     2022,
     2023,
     2024
   ],
   "muestras_por_mes_calendario": {
-    "ene": 6,
-    "feb": 6,
-    "mar": 6,
-    "abr": 6,
-    "may": 5,
-    "jun": 5,
-    "jul": 5,
-    "ago": 5,
-    "sep": 5,
-    "oct": 5,
-    "nov": 5,
-    "dic": 5
+    "ene": 11,
+    "feb": 11,
+    "mar": 11,
+    "abr": 11,
+    "may": 11,
+    "jun": 12,
+    "jul": 12,
+    "ago": 12,
+    "sep": 12,
+    "oct": 11,
+    "nov": 11,
+    "dic": 11
   },
-  "frac_dias_secos(<0.1mm)": 0.621,
-  "frac_dias_lluvia(>=1mm)": 0.289,
-  "asimetria_diaria": 3.99,
-  "autocorr_lag1_diaria": 0.33,
-  "autocorr_lag1_anomalias_mensuales": 0.19,
-  "estacionalidad_kruskal_p": 1.5e-07,
+  "frac_dias_secos(<0.1mm)": 0.572,
+  "frac_dias_lluvia(>=1mm)": 0.32,
+  "asimetria_diaria": 3.85,
+  "autocorr_lag1_diaria": 0.3,
+  "autocorr_lag1_anomalias_mensuales": 0.25,
+  "estacionalidad_kruskal_p": 2e-19,
   "distribucion_dias_lluvia": {
-    "n": 562,
+    "n": 1325,
     "aic": {
-      "gamma": 3811.4,
-      "lognorm": 3740.6,
-      "weibull": 3813.1
+      "gamma": 9050.9,
+      "lognorm": 8885.2,
+      "weibull": 9056.5
     },
     "best": "lognorm"
   },
   "distribucion_totales_mensuales": {
-    "n": 62,
+    "n": 134,
     "aic": {
-      "gamma": 602.6,
-      "lognorm": 623.5,
-      "weibull": 610.2
+      "gamma": 1410.0,
+      "lognorm": 1463.0,
+      "weibull": 1425.8
     },
     "best": "gamma"
   },
   "recomendaciones": [
     "Inflada en ceros y asimétrica: usar pruebas no paramétricas (Mann-Kendall, Sen, Kruskal-Wallis, bootstrap) o modelos gamma con masa en cero (SPI). Evitar t-test/OLS sobre mm.",
     "Estacionalidad significativa: comparar contra la climatología del mismo mes y usar Mann-Kendall estacional (Hirsch 1982) para tendencias mensuales.",
-    "Persistencia diaria (r1=0.33): los días no son independientes -> bootstrap por bloques para IC de frecuencias diarias.",
-    "Sólo 4 años completos: NO hay potencia para tendencias (mínimo 10; ver `python analysis.py power`). Ampliar la descarga (IMERG V07 diario existe desde 1998).",
+    "Persistencia diaria (r1=0.30): los días no son independientes -> bootstrap por bloques para IC de frecuencias diarias.",
+    "Autocorrelación en anomalías mensuales: usar Hamed-Rao (o Mann-Kendall estacional correlacionado) para no inflar el error tipo I.",
     "Sin climatología de referencia confiable (< 20 años): las anomalías y umbrales (SPI, percentiles) serían autorreferidos.",
     "Montos de días con lluvia: mejor ajuste = lognorm (AIC)."
   ]

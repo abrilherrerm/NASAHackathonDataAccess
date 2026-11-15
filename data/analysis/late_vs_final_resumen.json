@@ -1,0 +1,102 @@
+{
+  "traslape": [
+    "2023-10-01",
+    "2025-09-30"
+  ],
+  "margen_equivalencia": 0.1,
+  "equivalencia_totales_mensuales": {
+    "lluvias (may–nov)": {
+      "n": 98,
+      "cociente_mediano": 1.184,
+      "ic95": [
+        1.069,
+        1.243
+      ],
+      "p_tost": 0.83,
+      "equivalente_±10%": false,
+      "unidad": "región × mes"
+    },
+    "secas (dic–abr)": {
+      "n": 70,
+      "cociente_mediano": 1.017,
+      "ic95": [
+        0.915,
+        1.227
+      ],
+      "p_tost": 0.098,
+      "equivalente_±10%": false,
+      "unidad": "región × mes"
+    }
+  },
+  "deteccion_dias_lluvia": {
+    "México": {
+      "frec_final_pct": 21.2,
+      "frec_late_pct": 21.3,
+      "dif_pp": 0.1,
+      "POD": 0.884,
+      "FAR": 0.119,
+      "CSI": 0.79
+    },
+    "grupo 1": {
+      "frec_final_pct": 4.4,
+      "frec_late_pct": 4.7,
+      "dif_pp": 0.3,
+      "POD": 0.756,
+      "FAR": 0.293,
+      "CSI": 0.575
+    },
+    "grupo 2": {
+      "frec_final_pct": 4.7,
+      "frec_late_pct": 4.9,
+      "dif_pp": 0.2,
+      "POD": 0.76,
+      "FAR": 0.274,
+      "CSI": 0.591
+    },
+    "grupo 3": {
+      "frec_final_pct": 15.4,
+      "frec_late_pct": 16.0,
+      "dif_pp": 0.6,
+      "POD": 0.868,
+      "FAR": 0.162,
+      "CSI": 0.743
+    },
+    "grupo 4": {
+      "frec_final_pct": 18.1,
+      "frec_late_pct": 17.9,
+      "dif_pp": -0.2,
+      "POD": 0.842,
+      "FAR": 0.151,
+      "CSI": 0.733
+    },
+    "grupo 5": {
+      "frec_final_pct": 28.8,
+      "frec_late_pct": 29.2,
+      "dif_pp": 0.4,
+      "POD": 0.917,
+      "FAR": 0.095,
+      "CSI": 0.836
+    },
+    "grupo 6": {
+      "frec_final_pct": 33.2,
+      "frec_late_pct": 32.1,
+      "dif_pp": -1.0,
+      "POD": 0.894,
+      "FAR": 0.077,
+      "CSI": 0.832
+    }
+  },
+  "transferencia_correccion": {
+    "sin_corregir": {
+      "cociente_mediano_celda": 1.049,
+      "error_abs_mediano_pct": 37.2,
+      "sesgo_nacional_año2_pct": 13.5
+    },
+    "corregido_año1": {
+      "cociente_mediano_celda": 0.979,
+      "error_abs_mediano_pct": 42.8,
+      "sesgo_nacional_año2_pct": 23.1
+    }
+  },
+  "cv_interanual_temporada_lluvias_nacional": 0.09
+}
